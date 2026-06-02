@@ -8,6 +8,10 @@ This is a greenfield Python project in the **planning phase**. No source code, `
 
 Planning docs live in `planning/` (Obsidian notes); settings notes live in `Settings/`. Project planning documents are written in Hebrew. The user is new to this domain and treats the plan as a starting point, not a fixed spec — questions and pushback are wanted.
 
+## Git workflow (agreed with user)
+
+Commit at **logical milestones** — each module or fix that has passed the user's review — **never on a timer**. At each such checkpoint, **proactively propose** the commit ("we finished X, worth committing — approve?") and commit only after the user says yes. Do not auto-commit silently, and do not commit mid-work. Pushing stays manual / on request.
+
 ## What the tool does
 
 A generic Python utility that turns a customer's raw data (Google Sheets) into Salesforce-ready load sheets, with dedup and insert/upsert decisions baked in. Key design constraints:

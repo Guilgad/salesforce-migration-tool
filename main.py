@@ -11,9 +11,12 @@ from modules import sheets_io, query_builder
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="centered")
 
-# כיוון RTL בסיסי לעברית
+# כיוון RTL בסיסי לעברית — אך קוד (SQL) תמיד LTR כדי שלא יוצג הפוך
 st.markdown(
-    "<style>.stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton {direction: rtl; text-align: right;}</style>",
+    "<style>"
+    ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton {direction: rtl; text-align: right;}"
+    '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
+    "</style>",
     unsafe_allow_html=True,
 )
 

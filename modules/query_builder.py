@@ -35,8 +35,8 @@ def build_field_definition_query(objects: list[str]) -> str:
         return ""
     in_list = ", ".join(f"'{name}'" for name in objects)
     return (
-        "SELECT EntityDefinition.Label, EntityDefinition.QualifiedApiName, "
-        "Label, QualifiedApiName, DataType "
-        "FROM FieldDefinition "
+        "SELECT EntityDefinition.Label, EntityDefinition.QualifiedApiName,\n"
+        "       Label, QualifiedApiName, DataType\n"
+        "FROM FieldDefinition\n"
         f"WHERE EntityDefinition.QualifiedApiName IN ({in_list})"
     )
