@@ -14,3 +14,4 @@ tags:
 | 2026-06-02 | תכנון | brainstorming מלא של הכלי (קלט=טמפלייט, מנוע גנרי + `template_config`, מנגנוני זיהוי, `local_key`, backfill, גיליונות נגזרים, wizard מודרך ב-Streamlit). מסמך תכנון מאושר נכתב ל-[[תוכנית פיתוח]]. |
 | 2026-06-02 | אימות-תשתית | אומת ש-`credentials.json` עובד ושיתוף גיליונות עם ה-service account תקין (הבחנת Editor/Viewer) באמצעות `check_access.py` (כלי-עזר חד-פעמי בשורש הפרויקט; לא חלק מהכלי). |
 | 2026-06-02 | מימוש | התחלת קוד: שלד `config/`+`modules/`, מודול `sheets_io` + מסך חיבור (`main.py`, Streamlit). נורות 🟢/🟡/🔴 (Editor/Viewer/עודף-הרשאה) אומתו מול גיליונות אמיתיים. |
+| 2026-06-02 | מימוש | מודול `query_builder` (שלב 1): ניקוי קלט רב-שורתי + בניית שאילתת `FieldDefinition`. נוצר `config/template_config.py` עם `DEFAULT_OBJECTS` (מחנה פסח). מסך "שלב 1" ב-`main.py` + ניווט מינימלי (רדיו בצד). הניווט/הנעילות המלאים — סבב נפרד. |
