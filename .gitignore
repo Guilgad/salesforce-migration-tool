@@ -1,0 +1,56 @@
+# === Secrets — NEVER commit ===
+credentials.json
+*.credentials.json
+service-account*.json
+token.json
+*.pem
+*.key
+.env
+.env.*
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# === IDE / editors ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Obsidian (local workspace, plugins, hot-keys) ===
+.obsidian/
+
+# === OS ===
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# === Logs / temp ===
+*.log
+logs/
+tmp/
+*.tmp
