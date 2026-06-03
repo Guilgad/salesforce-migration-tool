@@ -26,6 +26,12 @@ def clean_object_names(raw: str) -> list[str]:
     return result
 
 
+def build_data_query(object_api: str, fields: list[str]) -> str:
+    """מרכיב שאילתת SELECT לייצוא רשומות קיימות (כולל Id לצורך upsert ו-backfill)."""
+    field_csv = ", ".join(["Id"] + fields) if fields else "Id"
+    return f"SELECT {field_csv}\nFROM {object_api}"
+
+
 def build_field_definition_query(objects: list[str]) -> str:
     """
     מרכיב שאילתת FieldDefinition עבור רשימת אובייקטים.

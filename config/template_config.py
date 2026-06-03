@@ -50,3 +50,12 @@ CONTROL_COLUMNS: set[str] = {
 IDENTITY_OBJECT = "Contact"
 # שדה ת"ז — ברירת-המחדל למנגנון 1 (אם קיים במאגר השדות התקפים).
 DEFAULT_IDENTITY_FIELD = "ID_Number__c"
+
+# שמות לשוניות בגיליון ה-DB לכל אובייקט (מה שהמשתמש צריך ליצור ב-Inspector).
+# אובייקטים שאינם ברשימה → fallback = שם ה-API עצמו.
+DB_TAB_NAMES: dict[str, str] = {
+    "Contact":               "Contact",
+    "Campaign":              "Campaign",
+    "CampaignMember":        "CampaignMember",
+    "npe4__Relationship__c": "npe4__Relationship__c",
+}

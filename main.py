@@ -318,10 +318,82 @@ def screen_identity() -> None:
             st.info("נשמרה רשימה ריקה (אין מנגנון פעיל).")
 
 
+def screen_db_export() -> None:
+    """שלב 4 — שאילתות SELECT לייצוא DB + ולידציה של הגיליון המחובר."""
+    st.header("שלב 4 — ייצוא DB")
+    st.write(
+        "הרץ כל שאילתה ב-Salesforce Inspector, שמור את התוצאה בגיליון ה-DB בלשונית "
+        "המוצגת, ואז לחץ *בדוק DB* לאימות."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    if not template_link or not soql_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        return
+
+    try:
+        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"שגיאה בקריאת הגיליונות:\n\n{e}")
+        return
+
+    # אובייקט → שדות תקפים (ייחוד — שני בלוקי Contact לא כופלים שדות)
+    queries: dict[str, list[str]] = {}
+    for c in cols:
+        if c.status == mapper.STATUS_VALID and c.clean_api:
+            fields = queries.setdefault(c.object_api, [])
+            if c.clean_api not in fields:
+                fields.append(c.clean_api)
+
+    if not queries:
+        st.warning("אין עמודות ממופות תקפות — השלם קודם את המיפוי.")
+        return
+
+    # ===== סקשן A: שאילתות לייצוא =====
+    st.subheader("שאילתות לייצוא ב-Inspector")
+    for obj, fields in queries.items():
+        tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
+        with st.expander(f"**{obj}** — {len(fields)} שדות + Id", expanded=True):
+            st.code(query_builder.build_data_query(obj, fields), language="sql")
+            st.caption(f"שמור תוצאה ללשונית: **{tab_name}**")
+
+    # ===== סקשן B: ולידציה של גיליון ה-DB =====
+    st.divider()
+    st.subheader("סטטוס גיליון ה-DB")
+
+    db_link = st.session_state.get("link_db", "")
+    if not db_link:
+        st.info("גיליון DB אינו מחובר — חזור לשלב 0 וחבר אותו.")
+        return
+
+    if st.button("בדוק DB"):
+        access = sheets_io.check_access(db_link)
+        if not access.ok:
+            st.error(f"🔴 שגיאת גישה לגיליון DB: {access.error}")
+            return
+        st.markdown(f"🟢 **{access.name}** — גישה תקינה")
+        for obj in queries:
+            tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
+            try:
+                rows = sheets_io.read_values(db_link, tab=tab_name)
+            except Exception:  # noqa: BLE001
+                st.markdown(f"⚠️ **{obj}** — לשונית *{tab_name}* לא נמצאה")
+                continue
+            if not rows:
+                st.markdown(f"⚠️ **{obj}** — לשונית ריקה (אין נתונים)")
+                continue
+            header = rows[0]
+            record_count = len(rows) - 1
+            id_note = "" if "Id" in header else " · ⚠️ עמודת Id חסרה"
+            st.markdown(f"✅ **{obj}** — {record_count:,} רשומות{id_note}")
+
+
 SCREENS = {
     "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
     "מנגנוני זיהוי": screen_identity,
+    "שלב 4 — ייצוא DB": screen_db_export,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))
