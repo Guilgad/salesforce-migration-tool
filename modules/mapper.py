@@ -20,6 +20,7 @@ STATUS_INVALID = "invalid"  # 🔴 API מולא אך לא קיים במילון
 STATUS_MISSING = "missing"  # 🟡 אובייקט ממופה אבל אין API
 STATUS_IGNORE = "ignore"    # ⚪ עמודת-תיאור/מפריד
 STATUS_NO_DICT = "no_dict"  # ⚠️ האובייקט לא נמצא במילון (לא נשאל בשלב 1)
+STATUS_CONTROL = "control"  # 🎚️ עמודת-בקרה — לא נטענת כשדה, נצרכת ע"י ה-splitter
 
 # שם-API בסיילספורס הוא אותיות/ספרות/קו-תחתון בלבד — משמש לחילוץ מתוך ערך מעוטר
 _API_TOKEN = re.compile(r"[A-Za-z0-9_]+")
@@ -124,18 +125,25 @@ def normalize_api(raw: str) -> str:
 def validate_columns(
     columns: list[TemplateColumn],
     dictionary: dict,
+    control_columns: set[str] | None = None,
 ) -> list[TemplateColumn]:
     """
     מסווג כל עמודה מול מילון השדות (מעדכן במקום ומחזיר).
 
     dictionary: dict[object_api → ObjectInfo] (מ-field_dictionary.ParseResult.objects).
+    control_columns: תוויות של עמודות-בקרה (דגלים) שלא נטענות כשדה — מסומנות STATUS_CONTROL.
     """
+    controls = control_columns or set()
     field_apis = {
         obj_api: {f.api for f in obj.fields} for obj_api, obj in dictionary.items()
     }
     for c in columns:
         if c.ignored:
             c.status = STATUS_IGNORE
+            c.clean_api = ""
+            continue
+        if c.label in controls:
+            c.status = STATUS_CONTROL
             c.clean_api = ""
             continue
         c.clean_api = normalize_api(c.proposed_api)

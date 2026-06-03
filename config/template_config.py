@@ -37,3 +37,8 @@ WANDERING_OVERRIDES: dict[str, str] = {
     "מחיר כרטיס ליחיד": "CampaignMember",  # מחיר לכל משתתף (רק כש"משתתף באירוע"=TRUE)
     "סוג הקשר": "npe4__Relationship__c",
 }
+
+# עמודות-בקרה: דגלים שמכתיבים לוגיקה (נצרכים ע"י ה-splitter) אך אינם נטענים כשדה.
+CONTROL_COLUMNS: set[str] = {
+    "משתתף באירוע",  # TRUE/FALSE — האם ליצור CampaignMember עבור איש הקשר בשורה
+}
