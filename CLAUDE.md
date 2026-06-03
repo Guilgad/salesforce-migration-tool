@@ -12,6 +12,9 @@ Planning docs live in `planning/` (Obsidian notes); settings notes live in `Sett
 
 Commit at **logical milestones** — each module or fix that has passed the user's review — **never on a timer**. At each such checkpoint, **proactively propose** the commit ("we finished X, worth committing — approve?") and commit only after the user says yes. Do not auto-commit silently, and do not commit mid-work. Pushing stays manual / on request.
 
+**Remote:** `https://github.com/Guilgad/salesforce-migration-tool.git` (origin/main).
+If `git remote -v` returns empty, run: `git remote add origin https://github.com/Guilgad/salesforce-migration-tool.git`
+
 ## What the tool does
 
 A generic Python utility that turns a customer's raw data (Google Sheets) into Salesforce-ready load sheets, with dedup and insert/upsert decisions baked in. Key design constraints:
