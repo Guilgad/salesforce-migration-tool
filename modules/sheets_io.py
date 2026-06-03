@@ -53,6 +53,31 @@ def _drive():
     return build("drive", "v3", credentials=get_credentials(), cache_discovery=False)
 
 
+def _sheets():
+    return build("sheets", "v4", credentials=get_credentials(), cache_discovery=False)
+
+
+def read_values(link_or_id: str, tab: str | None = None) -> list[list[str]]:
+    """
+    קורא את כל ערכי התאים מלשונית בגיליון, כרשימת שורות (כל שורה רשימת מחרוזות).
+    ברירת מחדל: הלשונית הראשונה. שורות עשויות להיות "קצרות" (תאים ריקים בסוף מושמטים).
+    """
+    sid = extract_id(link_or_id)
+    svc = _sheets()
+    if tab is None:
+        meta = (
+            svc.spreadsheets()
+            .get(spreadsheetId=sid, fields="sheets.properties.title")
+            .execute()
+        )
+        sheets = meta.get("sheets", [])
+        if not sheets:
+            return []
+        tab = sheets[0]["properties"]["title"]
+    resp = svc.spreadsheets().values().get(spreadsheetId=sid, range=tab).execute()
+    return resp.get("values", [])
+
+
 def extract_id(link_or_id: str) -> str:
     """מחלץ מזהה גיליון מקישור מלא, או מחזיר את הקלט כמו שהוא."""
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", link_or_id or "")
