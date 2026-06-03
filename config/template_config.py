@@ -51,6 +51,13 @@ IDENTITY_OBJECT = "Contact"
 # שדה ת"ז — ברירת-המחדל למנגנון 1 (אם קיים במאגר השדות התקפים).
 DEFAULT_IDENTITY_FIELD = "ID_Number__c"
 
+# שדות שמנורמלים ל"ספרות-בלבד" לצורך התאמת-dedup (פנימי בלבד — לא נוגע בדאטה הנטענת).
+# מקפים/רווחים/קידומות בטלפון ובת"ז לא יפילו התאמה. ניתן להרחבה.
+DIGITS_ONLY_FIELDS: set[str] = {
+    "ID_Number__c",
+    "MobilePhone",
+}
+
 # שמות לשוניות בגיליון ה-DB לכל אובייקט (מה שהמשתמש צריך ליצור ב-Inspector).
 # אובייקטים שאינם ברשימה → fallback = שם ה-API עצמו.
 DB_TAB_NAMES: dict[str, str] = {
