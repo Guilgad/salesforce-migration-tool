@@ -13,3 +13,11 @@ DEFAULT_OBJECTS: list[str] = [
     "npe4__Relationship__c",
     "CampaignMember",
 ]
+
+# מבנה שורות-הכותרת של "טמפלייט טעינה" (אינדקס שורה, 0-based).
+# 4 שורות כותרת ואז דאטה. ספציפי-לטמפלייט — לכן כאן ולא במנוע.
+TEMPLATE_BLOCK_ROW = 0       # כותרות בלוקים (קיבוץ לאובייקט; תאים ממוזגים/דלילים)
+TEMPLATE_HELP_ROW = 1        # טקסט הסבר/הנחיה — לא משמש למיפוי
+TEMPLATE_LABEL_ROW = 2       # שם העמודה בעברית (תווית אנושית)
+TEMPLATE_API_ROW = 3         # שם שדה ה-API בסיילספורס (המיפוי המוצע)
+TEMPLATE_DATA_START_ROW = 4  # השורה הראשונה של דאטה אמיתית
