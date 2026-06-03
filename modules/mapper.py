@@ -16,11 +16,14 @@ from dataclasses import dataclass
 
 @dataclass
 class TemplateColumn:
-    """עמודה אחת בטמפלייט, כפי שחולצה משורות-הכותרת."""
+    """עמודה אחת בטמפלייט, כפי שחולצה משורות-הכותרת ומועשרת בשלבים."""
     index: int            # אינדקס העמודה בגיליון (0-based)
     block: str            # כותרת הבלוק (מועברת קדימה על-פני תאים ממוזגים)
     label: str            # שם העמודה בעברית (שורת ה-label)
     proposed_api: str     # שם ה-API המוצע (שורת ה-api); '' אם ריק
+    # נקבעים בפרוסה 2 (assign_objects):
+    object_api: str = ""  # אובייקט ה-SF שאליו שייכת העמודה; '' = לא ממופה
+    ignored: bool = False  # עמודת-תיאור/מפריד שאינה נטענת
 
 
 def _cell(row: list[str], i: int) -> str:
@@ -68,4 +71,28 @@ def extract_columns(
                 proposed_api=_cell(api_src, i),
             )
         )
+    return columns
+
+
+def assign_objects(
+    columns: list[TemplateColumn],
+    block_to_object: dict[str, str],
+    wandering_overrides: dict[str, str],
+) -> list[TemplateColumn]:
+    """
+    מצמיד לכל עמודה אובייקט SF (מעדכן את העמודות במקום ומחזיר אותן).
+
+    - עמודת-תיאור/מפריד (בלי בלוק, או בלי תווית וגם בלי API) → ignored.
+    - חריג נודד (תווית ב-wandering_overrides) → גובר על ברירת-המחדל של הבלוק.
+    - אחרת → לפי מיפוי הבלוק. בלוק לא-ממופה → object_api נשאר '' (יסומן בולידציה).
+    """
+    for c in columns:
+        if not c.block or (not c.label and not c.proposed_api):
+            c.ignored = True
+            c.object_api = ""
+            continue
+        if c.label in wandering_overrides:
+            c.object_api = wandering_overrides[c.label]
+        else:
+            c.object_api = block_to_object.get(c.block, "")
     return columns
