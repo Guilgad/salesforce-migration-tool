@@ -45,3 +45,8 @@ WANDERING_OVERRIDES: dict[str, str] = {
 CONTROL_COLUMNS: set[str] = {
     "משתתף באירוע",  # TRUE/FALSE — האם ליצור CampaignMember עבור איש הקשר בשורה
 }
+
+# מנגנוני זיהוי (v1): מורכבים עבור אובייקט אחד בלבד; קמפיינים מזוהים בנפרד לפי שם.
+IDENTITY_OBJECT = "Contact"
+# שדה ת"ז — ברירת-המחדל למנגנון 1 (אם קיים במאגר השדות התקפים).
+DEFAULT_IDENTITY_FIELD = "ID_Number__c"

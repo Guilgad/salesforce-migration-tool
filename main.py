@@ -204,10 +204,85 @@ def screen_mapping() -> None:
     st.dataframe(table, hide_index=True, use_container_width=True)
 
 
+_N_MECHANISMS = 3
+
+
+def screen_identity() -> None:
+    """מסך הרכבת מנגנוני-זיהוי (3 מנגנונים מדורגים) — המשתמש בוחר, הכלי מרכיב."""
+    st.header("מנגנוני זיהוי")
+    st.write(
+        "הרכב עד שלושה מנגנונים לזיהוי איש-קשר, לפי עדיפות (1→3). כל מנגנון = צירוף "
+        "שדות שצריכים *כולם* להתאים. הראשון שמוצא התאמה מנצח."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    if not template_link or not soql_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        return
+
+    try:
+        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+    except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
+        st.error(f"שגיאה בקריאת הגיליונות או בפירוק:\n\n{e}")
+        return
+
+    # מאגר השדות = שדות Contact התקפים (✅), מיוחדים לפי API (אותו שדה בשני בלוקי Contact)
+    pool: dict[str, str] = {}  # api → תווית-תצוגה (api — label)
+    for c in cols:
+        if c.object_api == template_config.IDENTITY_OBJECT and c.status == mapper.STATUS_VALID:
+            pool.setdefault(c.clean_api, f"{c.clean_api} — {c.label}")
+    if not pool:
+        st.warning(
+            f"אין שדות תקפים לאובייקט {template_config.IDENTITY_OBJECT} — "
+            "השלם קודם את המיפוי (מסך *מיפוי*)."
+        )
+        return
+
+    disp2api = {disp: api for api, disp in pool.items()}
+    options = list(disp2api)
+    default_api = template_config.DEFAULT_IDENTITY_FIELD
+    default_disp = pool.get(default_api)  # למנגנון 1 בלבד, אם קיים במאגר
+
+    mechanisms: list[list[str]] = []
+    for n in range(1, _N_MECHANISMS + 1):
+        active = st.checkbox(f"מנגנון {n} — פעיל", value=(n == 1), key=f"mech_active_{n}")
+        default = [default_disp] if (n == 1 and default_disp) else []
+        chosen = st.multiselect(
+            f"שדות מנגנון {n} (צירוף AND)",
+            options,
+            default=default,
+            key=f"mech_fields_{n}",
+            disabled=not active,
+        )
+        if active and chosen:
+            mechanisms.append([disp2api[d] for d in chosen])
+
+    # תצוגה-מקדימה חיה של הרשימה שתורכב (לפי תוויות, קריא יותר)
+    st.divider()
+    if mechanisms:
+        api2label = {api: lbl.split(" — ", 1)[-1] for api, lbl in pool.items()}
+        preview = " · ".join(
+            f"מנגנון {i}: " + " + ".join(api2label.get(a, a) for a in mech)
+            for i, mech in enumerate(mechanisms, 1)
+        )
+        st.markdown(f"**יורכב:** {preview}")
+    else:
+        st.warning("אין מנגנון פעיל עם שדות — בחר לפחות מנגנון אחד.")
+
+    if st.button("שמור מנגנונים"):
+        st.session_state["mechanisms"] = mechanisms
+        if mechanisms:
+            st.success(f"נשמרו {len(mechanisms)} מנגנונים.")
+        else:
+            st.info("נשמרה רשימה ריקה (אין מנגנון פעיל).")
+
+
 SCREENS = {
     "שלב 0 — חיבור": screen_connection,
     "שלב 1 — SOQL": screen_soql,
     "שלבים 2–3 — מיפוי": screen_mapping,
+    "מנגנוני זיהוי": screen_identity,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))
