@@ -26,6 +26,25 @@ STATUS_CONTROL = "control"  # 🎚️ עמודת-בקרה — לא נטענת כ
 _API_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 
+def _address_components(prefix: str) -> set[str]:
+    """רכיבי שדה Address מורכב בסיילספורס לקידומת נתונה (Mailing/Other/...)."""
+    parts = ("Street", "City", "State", "PostalCode", "Country",
+             "Latitude", "Longitude", "GeocodeAccuracy")
+    return {prefix + p for p in parts}
+
+
+# שדות-תקן תקפים-לשליפה שאינם מוחזרים ב-FieldDefinition (רכיבי שדות מורכבים),
+# פר-אובייקט כדי לא להסתיר טעויות. מושמטים תלויי-הגדרה: StateCode/CountryCode
+# (State&Country Picklists), MiddleName/Suffix (הגדרת שם מורחבת).
+KNOWN_STANDARD_FIELDS: dict[str, set[str]] = {
+    "Contact": (
+        {"Salutation", "FirstName", "LastName"}
+        | _address_components("Mailing")
+        | _address_components("Other")
+    ),
+}
+
+
 @dataclass
 class TemplateColumn:
     """עמודה אחת בטמפלייט, כפי שחולצה משורות-הכותרת ומועשרת בשלבים."""
@@ -151,7 +170,10 @@ def validate_columns(
             c.status = STATUS_NO_DICT
         elif not c.clean_api:
             c.status = STATUS_MISSING
-        elif c.clean_api in field_apis[c.object_api]:
+        elif (
+            c.clean_api in field_apis[c.object_api]
+            or c.clean_api in KNOWN_STANDARD_FIELDS.get(c.object_api, set())
+        ):
             c.status = STATUS_VALID
         else:
             c.status = STATUS_INVALID
