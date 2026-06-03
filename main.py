@@ -458,7 +458,7 @@ def screen_contacts() -> None:
             record_values, mechanisms, db_records,
             digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
         )
-        grid = output_writer.build_contacts_grid(dedup, record_values, cols, db_by_id)
+        grid, cell_colors = output_writer.build_contacts_grid(dedup, record_values, cols, db_by_id)
     except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
         st.error(f"שגיאה בהרצת הצינור:\n\n{e}")
         return
@@ -476,24 +476,28 @@ def screen_contacts() -> None:
     )
 
     # ===== תצוגה מקדימה =====
-    if len(grid) > 1:
+    # שתי שורות-כותרת (עברית מעל API); כותרת התצוגה = העברית, נתונים משורה 2 ואילך.
+    if len(grid) > 2:
         st.subheader("תצוגה מקדימה")
         st.dataframe(
-            {grid[0][col]: [row[col] for row in grid[1:]] for col in range(len(grid[0]))},
+            {grid[0][col]: [row[col] for row in grid[2:]] for col in range(len(grid[0]))},
             use_container_width=True,
         )
     else:
-        st.info("אין אנשי קשר בטמפלייט עדיין — תיכתב שורת הכותרות בלבד.")
+        st.info("אין אנשי קשר בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
 
     # ===== כתיבה =====
     st.divider()
     out_tab = template_config.OUTPUT_TAB_CONTACTS
     st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
-    if st.button(f"כתוב {max(len(grid) - 1, 0)} שורות ל-{out_tab}"):
+    if st.button(f"כתוב {max(len(grid) - 2, 0)} שורות ל-{out_tab}"):
         try:
             sheets_io.ensure_tab(template_link, out_tab)
             n = sheets_io.write_grid(template_link, out_tab, grid)
-            st.success(f"נכתבו {n} שורות (כולל כותרת) ללשונית {out_tab}.")
+            sheets_io.set_tab_rtl(template_link, out_tab)
+            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            _read_cached.clear()  # רוקון מטמון אחרי כתיבה — הקריאה הבאה תביא נתון עדכני
+            st.success(f"נכתבו {n} שורות (כולל 2 שורות כותרת) ללשונית {out_tab}.")
         except Exception as e:  # noqa: BLE001
             st.error(f"כשל בכתיבה לטמפלייט: {e}")
 

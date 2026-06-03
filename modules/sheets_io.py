@@ -143,6 +143,97 @@ def write_grid(link_or_id: str, tab: str, grid: list[list[str]]) -> int:
     return len(grid)
 
 
+def _sheet_id(link_or_id: str, tab: str) -> int:
+    """
+    מחזיר את ה-sheetId המספרי (gid) של לשונית. נצרך לבקשות batchUpdate של
+    פורמט/RTL שעובדות מול gid (לא מול שם). זורק ValueError אם הלשונית חסרה.
+    """
+    sid = extract_id(link_or_id)
+    meta = (
+        _sheets()
+        .spreadsheets()
+        .get(spreadsheetId=sid, fields="sheets.properties(sheetId,title)")
+        .execute()
+    )
+    for s in meta.get("sheets", []):
+        if s["properties"]["title"] == tab:
+            return s["properties"]["sheetId"]
+    raise ValueError(f"לשונית לא נמצאה: {tab}")
+
+
+def set_tab_rtl(link_or_id: str, tab: str) -> None:
+    """מסמן לשונית ככיוון ימין-לשמאל (rightToLeft), כדי שתיקרא נכון בעברית."""
+    sid = extract_id(link_or_id)
+    sheet_id = _sheet_id(link_or_id, tab)
+    (
+        _sheets()
+        .spreadsheets()
+        .batchUpdate(
+            spreadsheetId=sid,
+            body={
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {"sheetId": sheet_id, "rightToLeft": True},
+                            "fields": "rightToLeft",
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
+
+
+# גווני-רקע רכים לצביעת תאים (עקבי עם נורות החיבור green/yellow/red).
+_CELL_COLORS = {
+    "green":  {"red": 0.78, "green": 0.91, "blue": 0.79},
+    "yellow": {"red": 1.00, "green": 0.95, "blue": 0.70},
+    "red":    {"red": 0.96, "green": 0.78, "blue": 0.78},
+}
+
+
+def color_cells(link_or_id: str, tab: str, updates: list[tuple[int, int, str]]) -> int:
+    """
+    צובע רקע תאים בודדים. updates: רשימת (row0, col0, color) באינדקסים 0-based,
+    color אחד מ-{"green","yellow","red"}. צבע לא-מוכר מדולג. updates ריק → 0 ללא קריאה.
+    מחזיר את מספר התאים שנצבעו.
+    """
+    if not updates:
+        return 0
+    sid = extract_id(link_or_id)
+    sheet_id = _sheet_id(link_or_id, tab)
+    requests = []
+    for row0, col0, color in updates:
+        rgb = _CELL_COLORS.get(color)
+        if rgb is None:
+            continue
+        requests.append(
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row0,
+                        "endRowIndex": row0 + 1,
+                        "startColumnIndex": col0,
+                        "endColumnIndex": col0 + 1,
+                    },
+                    "cell": {"userEnteredFormat": {"backgroundColor": rgb}},
+                    "fields": "userEnteredFormat.backgroundColor",
+                }
+            }
+        )
+    if not requests:
+        return 0
+    (
+        _sheets()
+        .spreadsheets()
+        .batchUpdate(spreadsheetId=sid, body={"requests": requests})
+        .execute()
+    )
+    return len(requests)
+
+
 def col_letter(col0: int) -> str:
     """אינדקס עמודה 0-based → אות A1 (0→A, 25→Z, 26→AA)."""
     s, n = "", col0 + 1
