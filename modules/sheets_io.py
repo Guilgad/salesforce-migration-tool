@@ -78,13 +78,17 @@ def read_values(link_or_id: str, tab: str | None = None) -> list[list[str]]:
     return resp.get("values", [])
 
 
-def _col_letter(col0: int) -> str:
+def col_letter(col0: int) -> str:
     """אינדקס עמודה 0-based → אות A1 (0→A, 25→Z, 26→AA)."""
     s, n = "", col0 + 1
     while n > 0:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
+
+
+# alias פנימי לאחור-תאימות בתוך המודול
+_col_letter = col_letter
 
 
 def write_cells(link_or_id: str, tab: str, updates: list[tuple[int, int, str]]) -> int:

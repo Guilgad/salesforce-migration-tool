@@ -1,7 +1,6 @@
 """
 כלי מיגרציה לסיילספורס — wizard (Streamlit).
 
-ניווט מינימלי בין שלבים (רדיו בצד) — הניווט/הנעילות המלאים יבואו בסבב נפרד.
 הרצה:  streamlit run main.py
 """
 import streamlit as st
@@ -11,10 +10,11 @@ from modules import sheets_io, query_builder, field_dictionary, mapper, recent_s
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="centered")
 
-# כיוון RTL בסיסי לעברית — אך קוד (SQL) תמיד LTR כדי שלא יוצג הפוך
+# כיוון RTL בסיסי לעברית (כולל כותרות) — אך קוד (SQL) תמיד LTR כדי שלא יוצג הפוך
 st.markdown(
     "<style>"
-    ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton {direction: rtl; text-align: right;}"
+    ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton,"
+    ' [data-testid="stHeading"], h1, h2, h3, h4 {direction: rtl; text-align: right;}'
     '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
     "</style>",
     unsafe_allow_html=True,
@@ -31,11 +31,34 @@ SHEETS = [
 
 _DOT = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 
+# בחירות מיוחדות ב-dropdown של המיפוי
+_OTHER = "אחר (הזן ידנית)"
+_UNMAPPED = "—"
+
 
 def screen_connection() -> None:
-    """שלב 0 — מסך חיבור: כתובת ה-service account + נורית גישה לכל גיליון."""
-    st.header("שלב 0 — חיבור גיליונות")
+    """שלב 0 — חיבור גיליונות + בניית שאילתת SOQL למילון השדות."""
+    st.header("שלב 0 — חיבור + שאילתת מילון")
 
+    # ===== בונה שאילתת SOQL (שלב 1 לשעבר) — מקופל מעל החיבור =====
+    with st.expander("בניית שאילתת מילון (FieldDefinition) ל-Inspector", expanded=False):
+        st.write(
+            "הזן שמות-API של אובייקטים (אחד בכל שורה). הכלי ירכיב שאילתה — העתק "
+            "ל-Salesforce Inspector, הרץ, ושמור את התוצאה כגיליון *מיפוי אובייקטים ושדות*, "
+            "ואז חבר אותו למטה."
+        )
+        default_objects = "\n".join(template_config.DEFAULT_OBJECTS)
+        raw = st.text_area("אובייקטים", value=default_objects, height=140, key="soql_objects")
+        objects = query_builder.clean_object_names(raw)
+        if objects:
+            st.caption(f"{len(objects)} אובייקטים: {', '.join(objects)}")
+            st.code(query_builder.build_field_definition_query(objects), language="sql")
+        else:
+            st.warning("לא הוזנו אובייקטים — אין שאילתה להציג.")
+
+    st.divider()
+
+    # ===== חיבור שלושת הגיליונות =====
     try:
         sa_email = sheets_io.service_account_email()
         st.write("שתף כל גיליון עם ה-service account, ברמת ההרשאה המתאימה:")
@@ -44,19 +67,16 @@ def screen_connection() -> None:
         st.error(f"שגיאה בטעינת credentials.json — ודא שהקובץ קיים בשורש הפרויקט.\n\n{e}")
         st.stop()
 
-    st.divider()
     new_label = "— הדבק קישור חדש —"
     for key, label, needs_write in SHEETS:
         needed = "Editor" if needs_write else "Viewer"
         recents = recent_sheets.recent_for(key)
-        # רשימת אחרונים (לפי שם, אחרון-ראשון) + אפשרות קישור חדש בסוף
         options = [r["name"] for r in recents] + [new_label]
         sel = st.selectbox(f"{label}  (נדרש: {needed})", options, key=f"recent_{key}")
         if sel == new_label:
             resolved = st.text_input("הדבק קישור לגיליון", key=f"newlink_{key}")
         else:
             resolved = next((r["id"] for r in recents if r["name"] == sel), "")
-        # הקישור שנבחר זמין לשאר השלבים
         st.session_state[f"link_{key}"] = resolved
 
     if st.button("בדוק חיבור"):
@@ -66,45 +86,37 @@ def screen_connection() -> None:
             status = sheets_io.connection_status(link, needs_write)
             suffix = f"  ·  _{status.name}_" if status.name else ""
             st.markdown(f"{_DOT[status.color]} **{label}** — {status.message}{suffix}")
-            # חיבור שנפתח בהצלחה → נשמר לזיכרון האחרונים
             if status.name:
                 recent_sheets.remember(key, sheets_io.extract_id(link), status.name)
 
 
-def screen_soql() -> None:
-    """שלב 1 — בניית שאילתת SOQL למילון השדות (FieldDefinition)."""
-    st.header("שלב 1 — בניית שאילתת SOQL")
-    st.write(
-        "הזן שמות-API של אובייקטים (אחד בכל שורה). הכלי ירכיב שאילתת "
-        "`FieldDefinition` — העתק אותה ל-Salesforce Inspector, הרץ, "
-        "ושמור את התוצאה כגיליון *מיפוי אובייקטים ושדות*."
-    )
-
-    default_objects = "\n".join(template_config.DEFAULT_OBJECTS)
-    raw = st.text_area("אובייקטים", value=default_objects, height=160, key="soql_objects")
-
-    objects = query_builder.clean_object_names(raw)
-    if not objects:
-        st.warning("לא הוזנו אובייקטים — אין שאילתה להציג.")
-        return
-
-    query = query_builder.build_field_definition_query(objects)
-    st.caption(f"{len(objects)} אובייקטים: {', '.join(objects)}")
-    st.code(query, language="sql")
-
-
-_STATUS_ICON = {
-    mapper.STATUS_VALID: "✅",
-    mapper.STATUS_INVALID: "🔴",
-    mapper.STATUS_MISSING: "🟡",
-    mapper.STATUS_CONTROL: "🎚️",
-    mapper.STATUS_IGNORE: "⚪",
-    mapper.STATUS_NO_DICT: "⚠️",
+# סטטוס → (אייקון, תווית-תיאור). הסדר כאן הוא סדר המקרא.
+_STATUS_LABEL = {
+    mapper.STATUS_VALID: ("✅", "התאמה"),
+    mapper.STATUS_INVALID: ("🔴", "התאמה שגויה"),
+    mapper.STATUS_MISSING: ("🟡", "לא נמצאה התאמה"),
+    mapper.STATUS_CONTROL: ("🎚️", "בקרה (לא נטען)"),
+    mapper.STATUS_NO_DICT: ("⚠️", "האובייקט לא נכלל בשאילתא"),
+    mapper.STATUS_IGNORE: ("⚪", "לא רלוונטי"),
 }
+_STATUS_ICON = {s: icon for s, (icon, _lbl) in _STATUS_LABEL.items()}
 
 
-def _run_mapping_pipeline(template_link: str, soql_link: str) -> list[mapper.TemplateColumn]:
-    """קורא את הגיליונות ומריץ חילוץ→מיפוי→ולידציה. מחזיר עמודות מסווגות."""
+def _apply_object_overrides(cols: list[mapper.TemplateColumn]) -> None:
+    """מחיל override לאובייקט פר-עמודה מתוך ה-session (תיקון ידני במסך המיפוי)."""
+    for c in cols:
+        key = f"obj_{c.index}"
+        if key in st.session_state:
+            val = st.session_state[key]
+            if val == _OTHER:
+                val = st.session_state.get(f"objother_{c.index}", "").strip()
+            elif val == _UNMAPPED:
+                val = ""
+            c.object_api = val
+
+
+def _run_mapping_pipeline(template_link: str, soql_link: str):
+    """קורא את הגיליונות ומריץ חילוץ→מיפוי→(override)→ולידציה. מחזיר עמודות + אזהרות + מילון."""
     dict_rows = sheets_io.read_values(soql_link)
     parsed = field_dictionary.parse_field_dictionary(dict_rows, template_config.DEFAULT_OBJECTS)
     tmpl_rows = sheets_io.read_values(template_link, tab=template_config.TEMPLATE_TAB)
@@ -115,12 +127,54 @@ def _run_mapping_pipeline(template_link: str, soql_link: str) -> list[mapper.Tem
         api_row=template_config.TEMPLATE_API_ROW,
     )
     mapper.assign_objects(cols, template_config.BLOCK_TO_OBJECT, template_config.WANDERING_OVERRIDES)
+    _apply_object_overrides(cols)  # תיקוני אובייקט ידניים (session) — לפני הוולידציה
     mapper.validate_columns(cols, parsed.objects, control_columns=template_config.CONTROL_COLUMNS)
     return cols, parsed.warnings, parsed.objects
 
 
+def _object_selectbox(c: mapper.TemplateColumn, base_objs: list[str]) -> str:
+    """dropdown אובייקט לשורה. מחזיר את האובייקט שנבחר (כולל '' ללא-מיפוי / ערך ידני)."""
+    opts = [_UNMAPPED] + base_objs + [_OTHER]
+    cur = c.object_api
+    if cur in base_objs:
+        idx = opts.index(cur)
+    elif not cur:
+        idx = 0
+    else:
+        idx = opts.index(_OTHER)
+    sel = st.selectbox("אובייקט", opts, index=idx, key=f"obj_{c.index}",
+                       label_visibility="collapsed")
+    if sel == _OTHER:
+        default = cur if cur not in base_objs else ""
+        return st.text_input("אובייקט (ידני)", value=default, key=f"objother_{c.index}",
+                             label_visibility="collapsed").strip()
+    if sel == _UNMAPPED:
+        return ""
+    return sel
+
+
+def _api_selectbox(c: mapper.TemplateColumn, obj: str, dictionary: dict) -> str:
+    """dropdown API לשורה, תלוי באובייקט שנבחר. מחזיר את ה-API שנבחר (או ידני)."""
+    disp2api = {f"{f.api} — {f.label}": f.api for f in mapper.candidates_for(obj, dictionary)}
+    opts = list(disp2api) + [_OTHER]
+    cur = c.clean_api or c.proposed_api
+    cur_disp = next((d for d, a in disp2api.items() if a == cur), None)
+    if cur_disp:
+        idx = opts.index(cur_disp)
+    elif cur:
+        idx = opts.index(_OTHER)
+    else:
+        idx = 0 if disp2api else opts.index(_OTHER)
+    sel = st.selectbox("API", opts, index=idx, key=f"api_{c.index}", label_visibility="collapsed")
+    if sel == _OTHER:
+        default = cur if not cur_disp else ""
+        return st.text_input("API (ידני)", value=default, key=f"apiother_{c.index}",
+                             label_visibility="collapsed").strip()
+    return disp2api[sel]
+
+
 def screen_mapping() -> None:
-    """שלבים 2–3 — תצוגת מיפוי וולידציה (קריאה בלבד)."""
+    """שלבים 2–3 — מיפוי וולידציה עם עריכה inline."""
     st.header("שלבים 2–3 — מיפוי וולידציה")
 
     template_link = st.session_state.get("link_template", "")
@@ -135,73 +189,59 @@ def screen_mapping() -> None:
         st.error(f"שגיאה בקריאת הגיליונות או בפירוק:\n\n{e}")
         return
 
-    # סיכום נורות
+    # ===== מקרא נוריות (כל 6, תמיד, עם תיאור + ספירה) =====
     counts: dict[str, int] = {}
     for c in cols:
         counts[c.status] = counts.get(c.status, 0) + 1
-    summary = " · ".join(
-        f"{_STATUS_ICON[s]} {counts[s]}"
-        for s in (mapper.STATUS_VALID, mapper.STATUS_INVALID, mapper.STATUS_MISSING,
-                  mapper.STATUS_CONTROL, mapper.STATUS_NO_DICT, mapper.STATUS_IGNORE)
-        if counts.get(s)
+    legend = " · ".join(
+        f"{icon} {lbl} ({counts.get(s, 0)})" for s, (icon, lbl) in _STATUS_LABEL.items()
     )
-    st.markdown(f"**סיכום:** {summary}")
+    st.markdown(legend)
 
     for w in dict_warnings:
         st.warning(w)
 
-    # ===== עריכה: תיקון 🔴 שגוי / 🟡 חסר =====
-    needs = [c for c in cols if c.status in (mapper.STATUS_INVALID, mapper.STATUS_MISSING)]
-    if needs:
-        st.subheader("תיקון מיפוי")
-        st.caption(
-            "בחר לכל עמודה את שדה ה-API הנכון. השינויים ייכתבו לשורת ה-API שבטמפלייט "
-            "(רק התאים שתיקנת). אם השדה התקין חסר מהרשימה — בחר *אחר* והקלד אותו."
-        )
-        no_change, other = "(ללא שינוי)", "אחר (הקלד ידנית)"
-        corrections: dict[int, str] = {}
-        for c in needs:
-            disp2api = {f"{f.api} — {f.label}": f.api for f in mapper.candidates_for(c.object_api, dictionary)}
-            options = [no_change] + list(disp2api) + [other]
-            sel = st.selectbox(
-                f"{_STATUS_ICON[c.status]} עמ' {c.index} · {c.label} ({c.object_api}) — כעת: {c.proposed_api or '—'}",
-                options,
-                key=f"fix_{c.index}",
-            )
-            chosen = ""
-            if sel == other:
-                chosen = st.text_input("שם API", key=f"fixother_{c.index}").strip()
-            elif sel != no_change:
-                chosen = disp2api[sel]
-            if chosen and chosen != c.clean_api:
-                corrections[c.index] = chosen
+    st.caption(
+        "ערוך כל שורה: בחר אובייקט ו-API מהרשימות (או *אחר* להקלדה). תיקוני אובייקט נשמרים "
+        "לסשן; תיקוני API ייכתבו לטמפלייט בלחיצת *נעל ושמור*."
+    )
 
-        if corrections:
-            st.markdown("**ייכתבו לטמפלייט (שורת API):**")
-            for idx, api in corrections.items():
-                lbl = next(c.label for c in needs if c.index == idx)
-                st.markdown(f"- עמ' {idx} · {lbl} → `{api}`")
-            if st.button(f"🔒 נעל ושמור {len(corrections)} תיקונים לטמפלייט"):
-                try:
-                    updates = [(template_config.TEMPLATE_API_ROW, idx, api) for idx, api in corrections.items()]
-                    n = sheets_io.write_cells(template_link, template_config.TEMPLATE_TAB, updates)
-                    st.success(f"נכתבו {n} תיקונים לטמפלייט. לחץ *בדוק חיבור* או רענן כדי לראות נורות מעודכנות.")
-                except Exception as e:  # noqa: BLE001
-                    st.error(f"כשל בכתיבה לטמפלייט: {e}")
+    base_objs = list(dictionary.keys())
+    rows = [c for c in cols if c.status != mapper.STATUS_IGNORE]
 
-    # טבלת כל העמודות (ללא מפרידים/תיאור)
-    table = [
-        {
-            "נורית": _STATUS_ICON[c.status],
-            "#": c.index,
-            "תווית": c.label,
-            "אובייקט": c.object_api,
-            "API": c.clean_api or c.proposed_api,
-        }
-        for c in cols
-        if c.status != mapper.STATUS_IGNORE
-    ]
-    st.dataframe(table, hide_index=True, use_container_width=True)
+    # כותרות עמודות (סדר לוגי; תחת RTL מופיע מימין לשמאל)
+    widths = [3, 3, 4, 1, 1]
+    h = st.columns(widths)
+    for col, title in zip(h, ("שם עמודה מהלקוח", "אובייקט", "API", "נורית", "עמ'")):
+        col.markdown(f"**{title}**")
+
+    corrections: dict[int, str] = {}
+    for c in rows:
+        col_name, col_obj, col_api, col_light, col_letter = st.columns(widths)
+        col_name.write(c.label or "—")
+        with col_obj:
+            chosen_obj = _object_selectbox(c, base_objs)
+        with col_api:
+            chosen_api = _api_selectbox(c, chosen_obj, dictionary)
+        col_light.write(_STATUS_ICON.get(c.status, ""))
+        col_letter.write(sheets_io.col_letter(c.index))
+        if chosen_api and chosen_api != c.clean_api:
+            corrections[c.index] = chosen_api
+
+    # שמירת תיקוני API
+    st.divider()
+    if corrections:
+        st.markdown("**ייכתבו לטמפלייט (שורת API):**")
+        for idx, api in corrections.items():
+            lbl = next(c.label for c in rows if c.index == idx)
+            st.markdown(f"- עמ' {sheets_io.col_letter(idx)} · {lbl} → `{api}`")
+        if st.button(f"🔒 נעל ושמור {len(corrections)} תיקונים לטמפלייט"):
+            try:
+                updates = [(template_config.TEMPLATE_API_ROW, idx, api) for idx, api in corrections.items()]
+                n = sheets_io.write_cells(template_link, template_config.TEMPLATE_TAB, updates)
+                st.success(f"נכתבו {n} תיקונים לטמפלייט.")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"כשל בכתיבה לטמפלייט: {e}")
 
 
 _N_MECHANISMS = 3
@@ -279,8 +319,7 @@ def screen_identity() -> None:
 
 
 SCREENS = {
-    "שלב 0 — חיבור": screen_connection,
-    "שלב 1 — SOQL": screen_soql,
+    "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
     "מנגנוני זיהוי": screen_identity,
 }
