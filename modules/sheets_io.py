@@ -78,6 +78,37 @@ def read_values(link_or_id: str, tab: str | None = None) -> list[list[str]]:
     return resp.get("values", [])
 
 
+def _col_letter(col0: int) -> str:
+    """אינדקס עמודה 0-based → אות A1 (0→A, 25→Z, 26→AA)."""
+    s, n = "", col0 + 1
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def write_cells(link_or_id: str, tab: str, updates: list[tuple[int, int, str]]) -> int:
+    """
+    כתיבה כירורגית של תאים בודדים (לא דורסת תאים אחרים).
+    updates: רשימת (row0, col0, value) באינדקסים 0-based. מחזיר מספר התאים שנכתבו.
+    """
+    if not updates:
+        return 0
+    sid = extract_id(link_or_id)
+    data = [
+        {"range": f"'{tab}'!{_col_letter(col0)}{row0 + 1}", "values": [[value]]}
+        for row0, col0, value in updates
+    ]
+    (
+        _sheets()
+        .spreadsheets()
+        .values()
+        .batchUpdate(spreadsheetId=sid, body={"valueInputOption": "RAW", "data": data})
+        .execute()
+    )
+    return len(data)
+
+
 def extract_id(link_or_id: str) -> str:
     """מחלץ מזהה גיליון מקישור מלא, או מחזיר את הקלט כמו שהוא."""
     match = re.search(r"/d/([a-zA-Z0-9_-]+)", link_or_id or "")

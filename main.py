@@ -116,7 +116,7 @@ def _run_mapping_pipeline(template_link: str, soql_link: str) -> list[mapper.Tem
     )
     mapper.assign_objects(cols, template_config.BLOCK_TO_OBJECT, template_config.WANDERING_OVERRIDES)
     mapper.validate_columns(cols, parsed.objects, control_columns=template_config.CONTROL_COLUMNS)
-    return cols, parsed.warnings
+    return cols, parsed.warnings, parsed.objects
 
 
 def screen_mapping() -> None:
@@ -130,7 +130,7 @@ def screen_mapping() -> None:
         return
 
     try:
-        cols, dict_warnings = _run_mapping_pipeline(template_link, soql_link)
+        cols, dict_warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
     except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
         st.error(f"שגיאה בקריאת הגיליונות או בפירוק:\n\n{e}")
         return
@@ -150,12 +150,44 @@ def screen_mapping() -> None:
     for w in dict_warnings:
         st.warning(w)
 
-    # דורש תשומת לב: 🔴 שגוי / 🟡 חסר
+    # ===== עריכה: תיקון 🔴 שגוי / 🟡 חסר =====
     needs = [c for c in cols if c.status in (mapper.STATUS_INVALID, mapper.STATUS_MISSING)]
     if needs:
-        st.caption("דורש תשומת לב (יתוקן בפרוסת העריכה):")
+        st.subheader("תיקון מיפוי")
+        st.caption(
+            "בחר לכל עמודה את שדה ה-API הנכון. השינויים ייכתבו לשורת ה-API שבטמפלייט "
+            "(רק התאים שתיקנת). אם השדה התקין חסר מהרשימה — בחר *אחר* והקלד אותו."
+        )
+        no_change, other = "(ללא שינוי)", "אחר (הקלד ידנית)"
+        corrections: dict[int, str] = {}
         for c in needs:
-            st.markdown(f"- {_STATUS_ICON[c.status]} **{c.label}** ({c.object_api}) — `{c.proposed_api or '—'}`")
+            disp2api = {f"{f.api} — {f.label}": f.api for f in mapper.candidates_for(c.object_api, dictionary)}
+            options = [no_change] + list(disp2api) + [other]
+            sel = st.selectbox(
+                f"{_STATUS_ICON[c.status]} עמ' {c.index} · {c.label} ({c.object_api}) — כעת: {c.proposed_api or '—'}",
+                options,
+                key=f"fix_{c.index}",
+            )
+            chosen = ""
+            if sel == other:
+                chosen = st.text_input("שם API", key=f"fixother_{c.index}").strip()
+            elif sel != no_change:
+                chosen = disp2api[sel]
+            if chosen and chosen != c.clean_api:
+                corrections[c.index] = chosen
+
+        if corrections:
+            st.markdown("**ייכתבו לטמפלייט (שורת API):**")
+            for idx, api in corrections.items():
+                lbl = next(c.label for c in needs if c.index == idx)
+                st.markdown(f"- עמ' {idx} · {lbl} → `{api}`")
+            if st.button(f"🔒 נעל ושמור {len(corrections)} תיקונים לטמפלייט"):
+                try:
+                    updates = [(template_config.TEMPLATE_API_ROW, idx, api) for idx, api in corrections.items()]
+                    n = sheets_io.write_cells(template_link, template_config.TEMPLATE_TAB, updates)
+                    st.success(f"נכתבו {n} תיקונים לטמפלייט. לחץ *בדוק חיבור* או רענן כדי לראות נורות מעודכנות.")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"כשל בכתיבה לטמפלייט: {e}")
 
     # טבלת כל העמודות (ללא מפרידים/תיאור)
     table = [
@@ -170,7 +202,6 @@ def screen_mapping() -> None:
         if c.status != mapper.STATUS_IGNORE
     ]
     st.dataframe(table, hide_index=True, use_container_width=True)
-    st.caption("תצוגה בלבד. תיקון 🔴/🟡 ונעילה — בפרוסה הבאה.")
 
 
 SCREENS = {
