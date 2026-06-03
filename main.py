@@ -7,7 +7,7 @@
 import streamlit as st
 
 from config import template_config
-from modules import sheets_io, query_builder, field_dictionary, mapper
+from modules import sheets_io, query_builder, field_dictionary, mapper, recent_sheets
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="centered")
 
@@ -26,7 +26,7 @@ st.title("כלי מיגרציה לסיילספורס")
 SHEETS = [
     ("template", "עותק הטמפלייט", True),   # צריך כתיבה (Editor)
     ("db", "קובץ DB", False),              # קריאה בלבד (Viewer)
-    ("soql", "תוצאת SOQL", False),         # קריאה בלבד (Viewer)
+    ("soql", "מיפוי אובייקטים ושדות", False),  # קריאה בלבד (Viewer) — תוצאת שאילתת FieldDefinition
 ]
 
 _DOT = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
@@ -45,9 +45,19 @@ def screen_connection() -> None:
         st.stop()
 
     st.divider()
+    new_label = "— הדבק קישור חדש —"
     for key, label, needs_write in SHEETS:
         needed = "Editor" if needs_write else "Viewer"
-        st.text_input(f"{label}  (נדרש: {needed}) — קישור", key=f"link_{key}")
+        recents = recent_sheets.recent_for(key)
+        # רשימת אחרונים (לפי שם, אחרון-ראשון) + אפשרות קישור חדש בסוף
+        options = [r["name"] for r in recents] + [new_label]
+        sel = st.selectbox(f"{label}  (נדרש: {needed})", options, key=f"recent_{key}")
+        if sel == new_label:
+            resolved = st.text_input("הדבק קישור לגיליון", key=f"newlink_{key}")
+        else:
+            resolved = next((r["id"] for r in recents if r["name"] == sel), "")
+        # הקישור שנבחר זמין לשאר השלבים
+        st.session_state[f"link_{key}"] = resolved
 
     if st.button("בדוק חיבור"):
         st.divider()
@@ -56,6 +66,9 @@ def screen_connection() -> None:
             status = sheets_io.connection_status(link, needs_write)
             suffix = f"  ·  _{status.name}_" if status.name else ""
             st.markdown(f"{_DOT[status.color]} **{label}** — {status.message}{suffix}")
+            # חיבור שנפתח בהצלחה → נשמר לזיכרון האחרונים
+            if status.name:
+                recent_sheets.remember(key, sheets_io.extract_id(link), status.name)
 
 
 def screen_soql() -> None:
@@ -64,7 +77,7 @@ def screen_soql() -> None:
     st.write(
         "הזן שמות-API של אובייקטים (אחד בכל שורה). הכלי ירכיב שאילתת "
         "`FieldDefinition` — העתק אותה ל-Salesforce Inspector, הרץ, "
-        "ושמור את התוצאה כגיליון *תוצאת SOQL*."
+        "ושמור את התוצאה כגיליון *מיפוי אובייקטים ושדות*."
     )
 
     default_objects = "\n".join(template_config.DEFAULT_OBJECTS)
@@ -113,7 +126,7 @@ def screen_mapping() -> None:
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
     if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *תוצאת SOQL*.")
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
         return
 
     try:

@@ -54,3 +54,6 @@ Desktop.ini
 logs/
 tmp/
 *.tmp
+
+# === נתוני-ריצה מקומיים ===
+.recent_sheets.json
