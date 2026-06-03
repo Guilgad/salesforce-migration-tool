@@ -6,9 +6,12 @@
 import streamlit as st
 
 from config import template_config
-from modules import sheets_io, query_builder, field_dictionary, mapper, recent_sheets
+from modules import (
+    sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
+    splitter, dedup_engine, output_writer,
+)
 
-st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="centered")
+st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
 
 # כיוון RTL בסיסי לעברית (כולל כותרות) — אך קוד (SQL) תמיד LTR כדי שלא יוצג הפוך
 st.markdown(
@@ -34,6 +37,33 @@ _DOT = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 # בחירות מיוחדות ב-dropdown של המיפוי
 _OTHER = "אחר (הזן ידנית)"
 _UNMAPPED = "—"
+
+
+@st.cache_data(show_spinner=False)
+def _read_cached(link: str, tab: str | None) -> list[list[str]]:
+    """
+    קריאת ערכי-גיליון עם זיכרון-מטמון: כל עוד לא לחצו 'רענן', אותה (גיליון, לשונית)
+    נקראת פעם אחת בלבד — מעבר בין מסכים לא קורא שוב מ-Google (מהיר, חוסך מכסת-API).
+    אחרי כתיבה לגיליון יש לרוקן את המטמון (`_read_cached.clear()`) כדי לא להציג נתון ישן.
+    """
+    return sheets_io.read_values(link, tab=tab)
+
+
+def _sidebar_controls() -> None:
+    """כפתורי 'רענן מהגיליונות' (מרוקן מטמון) ו'התחל מחדש' (מנקה חישובים ובחירות)."""
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 רענן מהגיליונות"):
+        _read_cached.clear()
+        st.rerun()
+    if st.sidebar.button("♻️ התחל מחדש"):
+        _read_cached.clear()
+        # מנקה בחירות וחישובים, אך משאיר את החיבורים (קישורי הגיליונות) על כנם
+        for k in list(st.session_state.keys()):
+            if k.startswith(("mech_", "obj_", "api_", "tiebreak")) or k in (
+                "mechanisms",
+            ):
+                del st.session_state[k]
+        st.rerun()
 
 
 def screen_connection() -> None:
@@ -117,9 +147,9 @@ def _apply_object_overrides(cols: list[mapper.TemplateColumn]) -> None:
 
 def _run_mapping_pipeline(template_link: str, soql_link: str):
     """קורא את הגיליונות ומריץ חילוץ→מיפוי→(override)→ולידציה. מחזיר עמודות + אזהרות + מילון."""
-    dict_rows = sheets_io.read_values(soql_link)
+    dict_rows = _read_cached(soql_link, None)
     parsed = field_dictionary.parse_field_dictionary(dict_rows, template_config.DEFAULT_OBJECTS)
-    tmpl_rows = sheets_io.read_values(template_link, tab=template_config.TEMPLATE_TAB)
+    tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
     cols = mapper.extract_columns(
         tmpl_rows,
         block_row=template_config.TEMPLATE_BLOCK_ROW,
@@ -239,6 +269,7 @@ def screen_mapping() -> None:
             try:
                 updates = [(template_config.TEMPLATE_API_ROW, idx, api) for idx, api in corrections.items()]
                 n = sheets_io.write_cells(template_link, template_config.TEMPLATE_TAB, updates)
+                _read_cached.clear()  # המיפוי השתנה בגיליון — לקרוא מחדש בריצה הבאה
                 st.success(f"נכתבו {n} תיקונים לטמפלייט.")
             except Exception as e:  # noqa: BLE001
                 st.error(f"כשל בכתיבה לטמפלייט: {e}")
@@ -376,7 +407,7 @@ def screen_db_export() -> None:
         for obj in queries:
             tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
             try:
-                rows = sheets_io.read_values(db_link, tab=tab_name)
+                rows = _read_cached(db_link, tab_name)
             except Exception:  # noqa: BLE001
                 st.markdown(f"⚠️ **{obj}** — לשונית *{tab_name}* לא נמצאה")
                 continue
@@ -389,12 +420,92 @@ def screen_db_export() -> None:
             st.markdown(f"✅ **{obj}** — {record_count:,} רשומות{id_note}")
 
 
+def screen_contacts() -> None:
+    """שלב 5 — בניית גריד Contacts מוכן-לטעינה וכתיבתו ללשונית-פלט בטמפלייט."""
+    st.header("שלב 5 — בניית אנשי קשר לטעינה")
+    st.write(
+        "הכלי קורא את אנשי הקשר מהטמפלייט, מאחד כפילויות, ומשווה למאגר כדי לדעת מי "
+        "כבר קיים (לעדכון) ומי חדש. רשומות לעדכון מקבלות גם השלמת פרטים חסרים מהמאגר. "
+        "התוצאה נכתבת ללשונית מוכנה-לטעינה בתוך הטמפלייט."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    db_link = st.session_state.get("link_db", "")
+    mechanisms = st.session_state.get("mechanisms")
+
+    if not template_link or not soql_link or not db_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        return
+    if not mechanisms:
+        st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
+        return
+
+    try:
+        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+        tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
+        split_records = splitter.split_object(
+            "Contact", tmpl_rows, cols,
+            data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+        )
+        record_values = [r.values for r in split_records]
+
+        db_rows = _read_cached(db_link, template_config.DB_TAB_NAMES["Contact"])
+        db_records = sheets_io.rows_to_dicts(db_rows)
+        db_by_id = {r["Id"]: r for r in db_records if r.get("Id")}
+
+        dedup = dedup_engine.deduplicate(
+            record_values, mechanisms, db_records,
+            digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
+        )
+        grid = output_writer.build_contacts_grid(dedup, record_values, cols, db_by_id)
+    except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
+        st.error(f"שגיאה בהרצת הצינור:\n\n{e}")
+        return
+
+    # ===== סיכום-נורות =====
+    c = dedup.counts
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("חדשים", c.get("inserts", 0))
+    m2.metric("לעדכון", c.get("upserts", 0))
+    m3.metric("⚠️ נמצאו כמה התאמות", c.get("ambiguous", 0))
+    m4.metric("⚠️ ללא נתוני זיהוי", c.get("unkeyed", 0))
+    st.caption(
+        f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} אנשים ייחודיים · "
+        f"{len(db_records)} רשומות במאגר"
+    )
+
+    # ===== תצוגה מקדימה =====
+    if len(grid) > 1:
+        st.subheader("תצוגה מקדימה")
+        st.dataframe(
+            {grid[0][col]: [row[col] for row in grid[1:]] for col in range(len(grid[0]))},
+            use_container_width=True,
+        )
+    else:
+        st.info("אין אנשי קשר בטמפלייט עדיין — תיכתב שורת הכותרות בלבד.")
+
+    # ===== כתיבה =====
+    st.divider()
+    out_tab = template_config.OUTPUT_TAB_CONTACTS
+    st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
+    if st.button(f"כתוב {max(len(grid) - 1, 0)} שורות ל-{out_tab}"):
+        try:
+            sheets_io.ensure_tab(template_link, out_tab)
+            n = sheets_io.write_grid(template_link, out_tab, grid)
+            st.success(f"נכתבו {n} שורות (כולל כותרת) ללשונית {out_tab}.")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"כשל בכתיבה לטמפלייט: {e}")
+
+
 SCREENS = {
     "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
     "מנגנוני זיהוי": screen_identity,
     "שלב 4 — ייצוא DB": screen_db_export,
+    "שלב 5 — בניית Contacts": screen_contacts,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))
+_sidebar_controls()
 SCREENS[choice]()

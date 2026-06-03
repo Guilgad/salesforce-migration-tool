@@ -78,6 +78,71 @@ def read_values(link_or_id: str, tab: str | None = None) -> list[list[str]]:
     return resp.get("values", [])
 
 
+def rows_to_dicts(rows: list[list[str]]) -> list[dict]:
+    """
+    ממיר גריד (שורה ראשונה = כותרת) לרשימת מילונים {כותרת: ערך}.
+    חסין לשורות 'קצרות' (תאים ריקים בסוף מושמטים ב-API): מפתח חסר → "".
+    שורה ריקה לחלוטין מדולגת. משמש להפיכת ייצוא-DB ל-db_records ל-dedup.
+    """
+    if not rows:
+        return []
+    header = [str(h or "").strip() for h in rows[0]]
+    out: list[dict] = []
+    for row in rows[1:]:
+        if not any(str(c or "").strip() for c in row):
+            continue  # שורה ריקה — מדלגים
+        rec = {h: (str(row[i]).strip() if i < len(row) and row[i] is not None else "")
+               for i, h in enumerate(header) if h}
+        out.append(rec)
+    return out
+
+
+def ensure_tab(link_or_id: str, tab: str) -> None:
+    """יוצר לשונית אם אינה קיימת (אידמפוטנטי). לא נוגע בלשונית קיימת."""
+    sid = extract_id(link_or_id)
+    svc = _sheets()
+    meta = (
+        svc.spreadsheets()
+        .get(spreadsheetId=sid, fields="sheets.properties.title")
+        .execute()
+    )
+    titles = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if tab in titles:
+        return
+    (
+        svc.spreadsheets()
+        .batchUpdate(
+            spreadsheetId=sid,
+            body={"requests": [{"addSheet": {"properties": {"title": tab}}}]},
+        )
+        .execute()
+    )
+
+
+def write_grid(link_or_id: str, tab: str, grid: list[list[str]]) -> int:
+    """
+    כתיבה אידמפוטנטית של גריד שלם ללשונית: מנקה את הלשונית ואז כותב מ-A1 (RAW).
+    ריצה-חוזרת דורסת נקי (אין שיירים משורות ישנות). מחזיר מספר השורות שנכתבו.
+    """
+    sid = extract_id(link_or_id)
+    svc = _sheets()
+    svc.spreadsheets().values().clear(spreadsheetId=sid, range=tab, body={}).execute()
+    if not grid:
+        return 0
+    (
+        svc.spreadsheets()
+        .values()
+        .update(
+            spreadsheetId=sid,
+            range=f"'{tab}'!A1",
+            valueInputOption="RAW",
+            body={"values": grid},
+        )
+        .execute()
+    )
+    return len(grid)
+
+
 def col_letter(col0: int) -> str:
     """אינדקס עמודה 0-based → אות A1 (0→A, 25→Z, 26→AA)."""
     s, n = "", col0 + 1

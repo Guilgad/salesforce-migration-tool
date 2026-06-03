@@ -66,3 +66,7 @@ DB_TAB_NAMES: dict[str, str] = {
     "CampaignMember":        "CampaignMember",
     "npe4__Relationship__c": "npe4__Relationship__c",
 }
+
+# לשוניות-פלט שהכלי כותב לתוך הטמפלייט עצמו (אפשרות א' — הטמפלייט כבר משותף כ-Editor).
+# גריד מוכן-לטעינה: עמודות-מטא + שדות, שורה לכל אדם. ריצה-חוזרת דורסת נקי.
+OUTPUT_TAB_CONTACTS = "פלט - Contacts"
