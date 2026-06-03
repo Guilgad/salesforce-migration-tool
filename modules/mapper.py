@@ -11,7 +11,18 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+# סטטוס ולידציה של עמודה (פרוסה 3)
+STATUS_VALID = "valid"      # ✅ ה-API קיים במילון לאובייקט
+STATUS_INVALID = "invalid"  # 🔴 API מולא אך לא קיים במילון
+STATUS_MISSING = "missing"  # 🟡 אובייקט ממופה אבל אין API
+STATUS_IGNORE = "ignore"    # ⚪ עמודת-תיאור/מפריד
+STATUS_NO_DICT = "no_dict"  # ⚠️ האובייקט לא נמצא במילון (לא נשאל בשלב 1)
+
+# שם-API בסיילספורס הוא אותיות/ספרות/קו-תחתון בלבד — משמש לחילוץ מתוך ערך מעוטר
+_API_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 
 @dataclass
@@ -24,6 +35,9 @@ class TemplateColumn:
     # נקבעים בפרוסה 2 (assign_objects):
     object_api: str = ""  # אובייקט ה-SF שאליו שייכת העמודה; '' = לא ממופה
     ignored: bool = False  # עמודת-תיאור/מפריד שאינה נטענת
+    # נקבעים בפרוסה 3 (validate_columns):
+    clean_api: str = ""   # ה-API אחרי חילוץ מערך מעוטר ("Name (Campaign Name)"→"Name")
+    status: str = ""      # אחד מקבועי STATUS_*
 
 
 def _cell(row: list[str], i: int) -> str:
@@ -96,3 +110,47 @@ def assign_objects(
         else:
             c.object_api = block_to_object.get(c.block, "")
     return columns
+
+
+def normalize_api(raw: str) -> str:
+    """
+    מחלץ שם-API תקין מערך שעשוי להיות מעוטר.
+    "Name (Campaign Name)" → "Name" · "Requested_Amount__c" → ללא שינוי · "" → "".
+    """
+    m = _API_TOKEN.match((raw or "").strip())
+    return m.group(0) if m else ""
+
+
+def validate_columns(
+    columns: list[TemplateColumn],
+    dictionary: dict,
+) -> list[TemplateColumn]:
+    """
+    מסווג כל עמודה מול מילון השדות (מעדכן במקום ומחזיר).
+
+    dictionary: dict[object_api → ObjectInfo] (מ-field_dictionary.ParseResult.objects).
+    """
+    field_apis = {
+        obj_api: {f.api for f in obj.fields} for obj_api, obj in dictionary.items()
+    }
+    for c in columns:
+        if c.ignored:
+            c.status = STATUS_IGNORE
+            c.clean_api = ""
+            continue
+        c.clean_api = normalize_api(c.proposed_api)
+        if c.object_api not in field_apis:
+            c.status = STATUS_NO_DICT
+        elif not c.clean_api:
+            c.status = STATUS_MISSING
+        elif c.clean_api in field_apis[c.object_api]:
+            c.status = STATUS_VALID
+        else:
+            c.status = STATUS_INVALID
+    return columns
+
+
+def candidates_for(object_api: str, dictionary: dict) -> list:
+    """רשימת שדות האובייקט מהמילון (ל-dropdown תיקון). ריק אם האובייקט לא במילון."""
+    obj = dictionary.get(object_api)
+    return list(obj.fields) if obj else []
