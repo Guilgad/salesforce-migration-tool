@@ -461,8 +461,9 @@ def screen_contacts() -> None:
             digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
         )
         grid, cell_colors = output_writer.build_contacts_grid(dedup, record_values, cols, db_by_id)
-        manual_grid = output_writer.build_manual_grid(
-            dedup, record_values, cols, db_by_id, source_rows
+        manual_grid, _manual_colors = output_writer.build_manual_grid(
+            dedup, record_values, cols, db_by_id, source_rows,
+            digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
         )
     except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
         st.error(f"שגיאה בהרצת הצינור:\n\n{e}")
@@ -521,8 +522,9 @@ def screen_contacts() -> None:
             grid2, colors2 = output_writer.build_contacts_grid(
                 dedup, record_values, cols, db_by_id, manual_choices=choices
             )
-            manual2 = output_writer.build_manual_grid(
-                dedup, record_values, cols, db_by_id, source_rows, marked=choices
+            manual2, manual2_colors = output_writer.build_manual_grid(
+                dedup, record_values, cols, db_by_id, source_rows, marked=choices,
+                digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
             )
 
             sheets_io.ensure_tab(template_link, out_tab)
@@ -535,6 +537,11 @@ def screen_contacts() -> None:
                 sheets_io.ensure_tab(template_link, manual_tab)
                 sheets_io.write_grid(template_link, manual_tab, manual2)
                 sheets_io.set_tab_rtl(template_link, manual_tab)
+                sheets_io.color_cells(template_link, manual_tab, manual2_colors)
+                sheets_io.set_checkbox_column(
+                    template_link, manual_tab, output_writer.MANUAL_CHOICE_COL,
+                    1, len(manual2),  # שורות-דאטה (אחרי שורת-הכותרת)
+                )
 
             _read_cached.clear()  # רוקון מטמון אחרי כתיבה
             msg = f"נכתבו {max(n - 2, 0)} שורות ללשונית {out_tab}."
@@ -588,7 +595,7 @@ def screen_campaigns() -> None:
             record_values, mechanisms, db_records, local_key_prefix="K",
         )
         grid, cell_colors = output_writer.build_campaigns_grid(dedup, record_values, cols, db_by_id)
-        manual_grid = output_writer.build_manual_grid(
+        manual_grid, _manual_colors = output_writer.build_manual_grid(
             dedup, record_values, cols, db_by_id, source_rows,
             object_api=template_config.CAMPAIGN_OBJECT,
         )
@@ -644,7 +651,7 @@ def screen_campaigns() -> None:
             grid2, colors2 = output_writer.build_campaigns_grid(
                 dedup, record_values, cols, db_by_id, manual_choices=choices
             )
-            manual2 = output_writer.build_manual_grid(
+            manual2, manual2_colors = output_writer.build_manual_grid(
                 dedup, record_values, cols, db_by_id, source_rows,
                 object_api=template_config.CAMPAIGN_OBJECT, marked=choices,
             )
@@ -659,6 +666,11 @@ def screen_campaigns() -> None:
                 sheets_io.ensure_tab(template_link, manual_tab)
                 sheets_io.write_grid(template_link, manual_tab, manual2)
                 sheets_io.set_tab_rtl(template_link, manual_tab)
+                sheets_io.color_cells(template_link, manual_tab, manual2_colors)
+                sheets_io.set_checkbox_column(
+                    template_link, manual_tab, output_writer.MANUAL_CHOICE_COL,
+                    1, len(manual2),  # שורות-דאטה (אחרי שורת-הכותרת)
+                )
 
             _read_cached.clear()  # רוקון מטמון אחרי כתיבה
             msg = f"נכתבו {max(n - 2, 0)} שורות ללשונית {out_tab}."
@@ -725,7 +737,7 @@ def screen_relationship() -> None:
                 )
             except Exception:  # noqa: BLE001 — הלשונית עדיין לא קיימת
                 contacts_out_rows = []
-            contact_id_map = relationship_builder.contact_id_map_from_grid(contacts_out_rows)
+            contact_id_map = relationship_builder.id_map_from_grid(contacts_out_rows)
 
             if not contact_id_map:
                 st.error(
@@ -842,8 +854,8 @@ def screen_campaign_members() -> None:
             except Exception:  # noqa: BLE001
                 campaigns_out = []
 
-            contact_id_map = relationship_builder.contact_id_map_from_grid(contacts_out)
-            campaign_id_map = relationship_builder.contact_id_map_from_grid(campaigns_out)
+            contact_id_map = relationship_builder.id_map_from_grid(contacts_out)
+            campaign_id_map = relationship_builder.id_map_from_grid(campaigns_out)
 
             if not contact_id_map and not campaign_id_map:
                 st.error(

@@ -94,9 +94,9 @@ def _run_pipeline(cols, manual_choices=None):
     dedup = dedup_engine.deduplicate(record_values, MECHS, db_records, digits_only_fields=DIGITS)
     grid, colors = output_writer.build_contacts_grid(
         dedup, record_values, cols, db_by_id, manual_choices=manual_choices)
-    manual = output_writer.build_manual_grid(
+    manual, _ = output_writer.build_manual_grid(
         dedup, record_values, cols, db_by_id, source_rows,
-        marked=manual_choices)
+        marked=manual_choices, digits_only_fields=DIGITS)
     return dedup, db_by_id, grid, colors, manual
 
 

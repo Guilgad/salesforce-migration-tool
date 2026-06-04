@@ -110,7 +110,7 @@ def test_ambiguous_two_db_same_name_excluded_and_manual():
     assert len(_data_rows(grid)) == 0  # מוחרג מהטעינה
     assert res.counts["ambiguous"] == 1
 
-    manual = output_writer.build_manual_grid(
+    manual, _ = output_writer.build_manual_grid(
         res, records, COLUMNS, db_by_id, source_rows=[4], object_api="Campaign"
     )
     # כותרת + שורת-מקור + 2 מועמדים
@@ -125,7 +125,7 @@ def test_unkeyed_empty_name_excluded_and_manual():
     grid, _ = _grid(res, records, {})
     assert len(_data_rows(grid)) == 0
     assert res.counts["unkeyed"] == 1
-    manual = output_writer.build_manual_grid(
+    manual, _ = output_writer.build_manual_grid(
         res, records, COLUMNS, {}, source_rows=[4], object_api="Campaign"
     )
     assert len(manual) == 1 + 1  # כותרת + שורת-מקור בלבד (אין מועמדי-DB)

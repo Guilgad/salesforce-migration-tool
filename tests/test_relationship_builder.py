@@ -189,31 +189,71 @@ def test_grid_display_columns_have_red_color():
     assert all(color == "red" for _, _, color in colors)
 
 
-# ===== contact_id_map_from_grid =====
+# ===== id_map_from_grid =====
 
-def test_contact_id_map_reads_2header_grid():
-    """קריאת לשונית פלט-Contacts: local_key בעמודה 0, Id בעמודה 2."""
+def test_id_map_reads_2header_grid():
+    """קריאת לשונית פלט: local_key + Id מזוהים לפי שם-הכותרת (אין __Id)."""
     grid_rows = [
         ["מפתח פנימי", "נמצא לפי", "מזהה", "שם"],   # כותרת עברית
         ["local_key", "", "Id", "Name"],               # כותרת API
         ["C1", "1", "a001", "דן"],
         ["C2", "", "a002", "ענת"],
     ]
-    result = relationship_builder.contact_id_map_from_grid(grid_rows)
+    result = relationship_builder.id_map_from_grid(grid_rows)
     assert result == {"C1": "a001", "C2": "a002"}
 
 
-def test_contact_id_map_skips_empty_id():
-    """שורה עם Id ריק (Contacts שטרם נטענו) לא נכנסת למפה."""
+def test_id_map_skips_empty_id():
+    """שורה בלי Id (טרם נטענה) לא נכנסת למפה."""
     grid_rows = [
         ["מפתח פנימי", "נמצא לפי", "מזהה"],
         ["local_key", "", "Id"],
         ["C1", "", "a001"],
         ["C2", "", ""],   # Id ריק
     ]
-    result = relationship_builder.contact_id_map_from_grid(grid_rows)
+    result = relationship_builder.id_map_from_grid(grid_rows)
     assert result == {"C1": "a001"}
     assert "C2" not in result
+
+
+def test_id_map_prefers_loaded_id_column():
+    """__Id (תוצאת הטעינה) גובר על עמודת Id מזמן הבנייה."""
+    grid_rows = [
+        # כותרת עברית קצרה (עמודות-Inspector בלי תווית עברית)
+        ["מפתח פנימי", "נמצא לפי", "מזהה", "שם"],
+        ["local_key", "", "Id", "Name", "__Status", "__Id", "__Action", "__Errors"],
+        # C1: insert — Id ריק, __Id מלא (זה שצריך להיקרא)
+        ["C1", "", "", "דן", "Succeeded", "003NEW001", "Inserted", ""],
+        # C2: upsert — Id מלא וגם __Id מלא; __Id גובר
+        ["C2", "1", "003OLD002", "ענת", "Succeeded", "003UPD002", "Updated", ""],
+    ]
+    result = relationship_builder.id_map_from_grid(grid_rows)
+    assert result == {"C1": "003NEW001", "C2": "003UPD002"}
+
+
+def test_id_map_falls_back_to_id_when_loaded_empty():
+    """__Id ריק (טרם נטען) → נופלים לעמודת Id; שניהם ריקים → לא במפה."""
+    grid_rows = [
+        ["מפתח פנימי", "נמצא לפי", "מזהה", "שם"],
+        ["local_key", "", "Id", "Name", "__Status", "__Id", "__Action", "__Errors"],
+        ["C1", "1", "003OLD001", "דן", "", "", "", ""],   # upsert טרם-נטען → Id
+        ["C2", "", "", "ענת", "", "", "", ""],            # insert טרם-נטען → אין
+    ]
+    result = relationship_builder.id_map_from_grid(grid_rows)
+    assert result == {"C1": "003OLD001"}
+    assert "C2" not in result
+
+
+def test_id_map_handles_different_column_order():
+    """זיהוי לפי שם, לא לפי מיקום — __Id באינדקס שונה (כמו פלט-Campaigns)."""
+    grid_rows = [
+        ["מפתח פנימי", "נמצא לפי", "מזהה", "שם קמפיין", "תאריך"],
+        ["local_key", "", "Id", "Name", "StartDate", "__Status", "__Id", "__Action", "__Errors"],
+        ["K1", "", "", "קמפיין א", "2025-07-28", "Succeeded", "701AAA", "Inserted", ""],
+        ["K2", "", "", "קמפיין ב", "2025-07-28", "Succeeded", "701BBB", "Inserted", ""],
+    ]
+    result = relationship_builder.id_map_from_grid(grid_rows)
+    assert result == {"K1": "701AAA", "K2": "701BBB"}
 
 
 # ===== db_rel_pairs_from_records =====

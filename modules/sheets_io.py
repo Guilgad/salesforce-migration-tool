@@ -191,6 +191,9 @@ _CELL_COLORS = {
     "yellow": {"red": 1.00, "green": 0.95, "blue": 0.70},
     "red":    {"red": 0.96, "green": 0.78, "blue": 0.78},
     "orange": {"red": 1.00, "green": 0.80, "blue": 0.40},  # הכרעה-בשילוב — בולט לעין
+    # גווני-רקע עדינים להפרדת בלוקים בלשונית הטיפול-הידני (מתחלפים מקבוצה לקבוצה)
+    "band_a": {"red": 0.95, "green": 0.95, "blue": 0.95},  # אפור-בהיר
+    "band_b": {"red": 0.90, "green": 0.94, "blue": 1.00},  # כחול-בהיר
 }
 
 
@@ -233,6 +236,48 @@ def color_cells(link_or_id: str, tab: str, updates: list[tuple[int, int, str]]) 
         .execute()
     )
     return len(requests)
+
+
+def set_checkbox_column(
+    link_or_id: str, tab: str, col0: int, start_row0: int, end_row0: int
+) -> None:
+    """
+    הופך טווח תאים בעמודה אחת לתיבות-סימון (data validation מסוג BOOLEAN), כדי
+    שהמשתמש יסמן בלחיצה במקום להקליד. col0/שורות 0-based; end_row0 לא-כולל.
+    טווח ריק (end<=start) → לא עושה כלום.
+    """
+    if end_row0 <= start_row0:
+        return
+    sid = extract_id(link_or_id)
+    sheet_id = _sheet_id(link_or_id, tab)
+    (
+        _sheets()
+        .spreadsheets()
+        .batchUpdate(
+            spreadsheetId=sid,
+            body={
+                "requests": [
+                    {
+                        "setDataValidation": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": start_row0,
+                                "endRowIndex": end_row0,
+                                "startColumnIndex": col0,
+                                "endColumnIndex": col0 + 1,
+                            },
+                            "rule": {
+                                "condition": {"type": "BOOLEAN"},
+                                "strict": True,
+                                "showCustomUi": True,
+                            },
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
 
 
 def col_letter(col0: int) -> str:

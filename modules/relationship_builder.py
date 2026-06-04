@@ -49,15 +49,34 @@ def _display_name(values: dict) -> str:
     return (first + " " + last).strip()
 
 
-def contact_id_map_from_grid(grid_rows: list[list[str]]) -> dict[str, str]:
+def id_map_from_grid(grid_rows: list[list[str]]) -> dict[str, str]:
     """
-    local_key → sf_id מלשונית "פלט - Contacts" (מבנה 2-header של build_contacts_grid).
-    עמודה 0 = local_key, עמודה 2 = Id. מדלג על Ids ריקים (Contacts שטרם נטענו).
+    local_key → sf_id מלשונית-פלט (Contacts/Campaigns; מבנה 2-header של build_*_grid).
+
+    מקור ה-Id המועדף הוא עמודת `__Id` שאינספקטור מוסיף **אחרי הטעינה** (ה-Id האמיתי לכל
+    רשומה — insert או upsert). אם אין `__Id` (טרם נטען), נופלים לעמודת `Id` שנכתבה בבנייה
+    (מלאה רק ל-upsert). העמודות מזוהות **לפי שם** משורת-הכותרת ה-API (אינדקס 1) — חסין
+    לעמודות-Inspector העודפות (`__Status`/`__Action`/`__Errors`) ולשינוי סדר.
+    מדלג על שורות בלי Id (רשומות שטרם נטענו).
     """
+    api_header = grid_rows[1] if len(grid_rows) > 1 else []
+
+    def _find(name: str) -> int | None:
+        return api_header.index(name) if name in api_header else None
+
+    # נפילה-לאחור למבנה הישן אם הכותרת חסרה: local_key=0, Id=2.
+    key_idx = _find("local_key")
+    id_idx = _find("Id")
+    loaded_idx = _find("__Id")
+    if key_idx is None:
+        key_idx = 0
+    if id_idx is None:
+        id_idx = 2
+
     result: dict[str, str] = {}
     for row in grid_rows[_HEADER_ROWS:]:
-        key = _cell(row, 0)
-        sid = _cell(row, 2)
+        key = _cell(row, key_idx)
+        sid = (_cell(row, loaded_idx) if loaded_idx is not None else "") or _cell(row, id_idx)
         if key and sid:
             result[key] = sid
     return result

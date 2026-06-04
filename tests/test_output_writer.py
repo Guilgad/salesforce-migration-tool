@@ -111,7 +111,7 @@ def test_ambiguous_excluded_from_main_grid():
 def test_manual_grid_has_source_and_candidate_rows():
     """גריד הטיפול-הידני: שורת-מקור + שורת-מועמד לכל match_id; שורת-מקור 1-based."""
     records, db, res, db_by_id = _ambiguous_setup()
-    manual = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
+    manual, _ = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
     # כותרת + שורת-מקור + 2 מועמדים
     assert len(manual) == 1 + 1 + 2
     source_row = manual[1]
@@ -120,11 +120,21 @@ def test_manual_grid_has_source_and_candidate_rows():
     assert types == ["מקור", "מאגר", "מאגר"]
 
 
-def test_parse_manual_choices_reads_checkmark():
-    """סימון ✓ בשורת-מאגר → בחירת ה-Id לאותו מפתח פנימי."""
+def test_parse_manual_choices_reads_true_checkbox():
+    """תיבת-סימון TRUE בשורת-מאגר → בחירת ה-Id; FALSE לא נבחר."""
     records, db, res, db_by_id = _ambiguous_setup()
-    manual = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
-    # סימון המועמד הראשון (שורה 2 בגריד = מועמד "x")
+    manual, _ = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
+    manual[2][3] = "TRUE"   # עמודת "בחר" — מועמד "x" מסומן
+    manual[3][3] = "FALSE"  # מועמד "y" לא
+    choices, warnings = output_writer.parse_manual_choices(manual)
+    assert choices == {"C1": "x"}
+    assert warnings == []
+
+
+def test_parse_manual_choices_reads_checkmark_backcompat():
+    """תאימות-לאחור: גם ✓ מוקלד נספר כסימון."""
+    records, db, res, db_by_id = _ambiguous_setup()
+    manual, _ = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
     manual[2][3] = "✓"  # עמודת "בחר"
     choices, warnings = output_writer.parse_manual_choices(manual)
     assert choices == {"C1": "x"}
@@ -134,9 +144,9 @@ def test_parse_manual_choices_reads_checkmark():
 def test_parse_manual_choices_multiple_marks_warns_takes_first():
     """ריבוי-סימונים לאותו מפתח → אזהרה, נלקח הראשון."""
     records, db, res, db_by_id = _ambiguous_setup()
-    manual = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
-    manual[2][3] = "✓"
-    manual[3][3] = "✓"
+    manual, _ = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
+    manual[2][3] = "TRUE"
+    manual[3][3] = "TRUE"
     choices, warnings = output_writer.parse_manual_choices(manual)
     assert choices == {"C1": "x"}
     assert len(warnings) == 1
@@ -154,13 +164,64 @@ def test_manual_choice_becomes_upsert_in_main_grid():
 
 
 def test_idempotency_marked_choice_preserved_in_manual_grid():
-    """אידמפוטנטיות: בנייה-חוזרת עם marked משמרת את ה-✓ בשורת-המועמד הנבחר."""
+    """אידמפוטנטיות: בנייה-חוזרת עם marked מסמנת TRUE בשורת-המועמד הנבחר, FALSE בשאר."""
     records, db, res, db_by_id = _ambiguous_setup()
-    manual2 = output_writer.build_manual_grid(
+    manual2, _ = output_writer.build_manual_grid(
         res, records, COLUMNS, db_by_id, source_rows=[4], marked={"C1": "y"}
     )
-    # שורת המועמד "y" צריכה לשאת ✓ בעמודת "בחר"
+    # שורת המועמד "y" צריכה לשאת TRUE בעמודת "בחר"; "x" → FALSE
     y_row = next(r for r in manual2[1:] if r[5] == "y")  # עמודת "מזהה"
-    assert y_row[3] == "✓"
+    assert y_row[3] == "TRUE"
     x_row = next(r for r in manual2[1:] if r[5] == "x")
-    assert x_row[3] == ""
+    assert x_row[3] == "FALSE"
+
+
+# ===== טיפול ידני: צביעה (ירוק להתאמה + רקע-בלוק מתחלף) =====
+
+def test_manual_grid_greens_matching_fields():
+    """שדה זהה-למקור נצבע ירוק — גם בשורת-המקור וגם בשורות-המועמד."""
+    records, db, res, db_by_id = _ambiguous_setup()  # ת"ז "1" זהה במקור ובשני המועמדים
+    _, colors = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4])
+    id_col = len(output_writer._MANUAL_HEADER)  # 6 — שדה ID_Number__c (אינדקס 0)
+    greens = {(r, c) for r, c, color in colors if color == "green"}
+    assert (1, id_col) in greens   # שורת-מקור
+    assert (2, id_col) in greens   # מועמד x
+    assert (3, id_col) in greens   # מועמד y
+    # שדה ריק (FirstName, אינדקס 1) לא נצבע
+    assert (2, id_col + 1) not in greens
+
+
+def test_manual_grid_green_uses_digits_only_normalization():
+    """ירוק להתאמה מכבד digits-only: '055-1234567' == '0551234567' רק כשהשדה digits-only."""
+    records = [{"ID_Number__c": "055-1234567", "FirstName": "דנה", "LastName": "כהן"}]
+    db = [
+        {"Id": "x", "ID_Number__c": "0551234567", "FirstName": "דנה", "LastName": "כהן"},
+        {"Id": "y", "ID_Number__c": "999", "FirstName": "דנה", "LastName": "כהן"},
+    ]
+    res = dedup_engine.deduplicate(records, MECHS, db)  # דו-משמעי לפי שם (מנגנון 2)
+    db_by_id = {"x": db[0], "y": db[1]}
+    id_col = len(output_writer._MANUAL_HEADER)  # שדה ID (אינדקס 0)
+
+    _, plain = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[0])
+    _, digits = output_writer.build_manual_grid(
+        res, records, COLUMNS, db_by_id, source_rows=[0], digits_only_fields={"ID_Number__c"}
+    )
+    # מועמד x (שורה 2) — ID זהה רק אחרי ניקוי-ספרות
+    assert (2, id_col, "green") not in plain
+    assert (2, id_col, "green") in digits
+
+
+def test_manual_grid_alternating_band_per_group():
+    """כל קבוצת מקור+מועמדים מקבלת גוון-רקע מתחלף על עמודות-המטא."""
+    records = [{"ID_Number__c": "1"}, {"ID_Number__c": "2"}]
+    db = [
+        {"Id": "x", "ID_Number__c": "1"}, {"Id": "y", "ID_Number__c": "1"},
+        {"Id": "p", "ID_Number__c": "2"}, {"Id": "q", "ID_Number__c": "2"},
+    ]
+    res = dedup_engine.deduplicate(records, MECHS, db)  # שני אנשים דו-משמעיים
+    db_by_id = {r["Id"]: r for r in db}
+    _, colors = output_writer.build_manual_grid(res, records, COLUMNS, db_by_id, source_rows=[4, 5])
+    bands = {(r, c): color for r, c, color in colors if color in ("band_a", "band_b")}
+    # קבוצה 1 = שורות 1–3 → band_a; קבוצה 2 = שורות 4–6 → band_b (על עמודת-מטא 0)
+    assert bands.get((1, 0)) == "band_a"
+    assert bands.get((4, 0)) == "band_b"
