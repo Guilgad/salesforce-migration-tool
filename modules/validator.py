@@ -141,6 +141,60 @@ def validate_ids(db_by_object: dict[str, list[dict]]) -> list[Issue]:
     return issues
 
 
+def validate_output_grid(
+    grid: list[list[str]],
+    object_api: str,
+    dictionary: dict,
+) -> tuple[list["Issue"], list[tuple[int, int, str]]]:
+    """
+    בדיקות-נתונים על גריד-פלט מוכן-לטעינה (2 שורות-כותרת: עברית מעל API, ואז דאטה).
+
+    בודק שני סוגים, על הגריד שייכתב לגיליון-הטעינה עצמו (לא על הטמפלייט):
+      - תאריכים: תא בעמודת-שדה מסוג Date (לפי המילון) שאינו נפרסר (formatter.parse_date).
+      - אורך-Id: ערך בעמודת 'Id' באורך ≠ 18 (v1 אין ממיר 15→18).
+
+    object_api: האובייקט של הגריד (לקביעת סוגי-השדות מהמילון).
+    dictionary: dict[object_api → ObjectInfo] (כמו ב-validate_dates).
+
+    מחזיר (issues, marks):
+      issues: list[Issue] — location בקואורדינטות-גיליון (למשל "G5").
+      marks:  list[(row0, col0, message)] — תא-בעייתי, לצביעה + הערת-תא בגיליון.
+    """
+    if len(grid) <= _HEADER_ROWS:
+        return [], []
+    api_row = grid[_HEADER_ROWS - 1]  # שורת ה-API (השנייה מבין שתי הכותרות)
+    he_row = grid[0]
+
+    obj = dictionary.get(object_api)
+    type_by_api = {f.api: f.datatype for f in obj.fields} if obj else {}
+
+    issues: list[Issue] = []
+    marks: list[tuple[int, int, str]] = []
+    for col, api in enumerate(api_row):
+        if not api:
+            continue
+        is_date = type_by_api.get(api, "").strip().lower().startswith("date")
+        is_id = api == "Id"
+        if not (is_date or is_id):
+            continue
+        label = he_row[col] if col < len(he_row) else api
+        for r in range(_HEADER_ROWS, len(grid)):
+            value = grid[r][col] if col < len(grid[r]) else ""
+            text = formatter.normalize_text(value)
+            if not text:
+                continue
+            loc = f"{sheets_io.col_letter(col)}{r + 1}"
+            if is_date and formatter.parse_date(text) is None:
+                msg = f"הערך '{text}' אינו תאריך תקין — צפוי פורמט כמו 04.06.2026."
+                issues.append(Issue(KIND_BAD_DATE, SEVERITY_ERROR, label, loc, msg))
+                marks.append((r, col, msg))
+            elif is_id and len(text) != 18:
+                msg = f"Id '{text}' באורך {len(text)} (צפוי 18) — ייתכן Id קצר שאינו נתמך."
+                issues.append(Issue(KIND_BAD_ID, SEVERITY_WARNING, label, loc, msg))
+                marks.append((r, col, msg))
+    return issues, marks
+
+
 _SEVERITY_HE = {SEVERITY_ERROR: "שגיאה", SEVERITY_WARNING: "אזהרה"}
 _KIND_HE = {
     KIND_UNMAPPED: "עמודה ללא מיפוי",

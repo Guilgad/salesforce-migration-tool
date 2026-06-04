@@ -9,7 +9,7 @@ from config import template_config
 from modules import (
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
     splitter, dedup_engine, output_writer, relationship_builder, campaign_member_builder,
-    validator,
+    validator, notes_store,
 )
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
@@ -20,6 +20,9 @@ st.markdown(
     ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton,"
     ' [data-testid="stHeading"], h1, h2, h3, h4 {direction: rtl; text-align: right;}'
     '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
+    # פאנל-צד: הרחבה קלה + טקסט-שלבים מעט גדול יותר לנוחות
+    ' [data-testid="stSidebar"] {min-width: 340px;}'
+    ' [data-testid="stSidebar"] [role="radiogroup"] label p {font-size: 1.05rem;}'
     "</style>",
     unsafe_allow_html=True,
 )
@@ -35,9 +38,10 @@ SHEETS = [
 
 _DOT = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 
-# בחירות מיוחדות ב-dropdown של המיפוי
+# בחירות מיוחדות ב-dropdown של המיפוי (מופיעות בראש הרשימה)
 _OTHER = "אחר (הזן ידנית)"
 _UNMAPPED = "—"
+_BLANK = "— ריק —"  # ב-dropdown של API: בחירת 'כלום' בלי לפתוח תיבת-הקלדה
 
 
 @st.cache_data(show_spinner=False)
@@ -51,14 +55,21 @@ def _read_cached(link: str, tab: str | None) -> list[list[str]]:
 
 
 def _sidebar_controls() -> None:
-    """כפתורי 'רענן מהגיליונות' (מרוקן מטמון) ו'התחל מחדש' (מנקה חישובים ובחירות)."""
-    st.sidebar.divider()
-    if st.sidebar.button("🔄 רענן מהגיליונות"):
+    """
+    שני כפתורים זה-לצד-זה מעל הקו המפריד, ותחתיו פתק-הערות אישי שנשמר מקומית:
+    - 'רענן נתונים'        — מרוקן את מטמון-הקריאה (קורא נתונים טריים מהגיליונות).
+    - 'רענן ואפס הגדרות'   — מרוקן מטמון *וגם* מוחק בחירות; משאיר חיבורים והערות.
+    """
+    c1, c2 = st.sidebar.columns(2)
+    if c1.button("רענן נתונים", use_container_width=True,
+                 help="קורא מחדש נתונים עדכניים משלושת הגיליונות. לא נוגע בבחירות שלך."):
         _read_cached.clear()
         st.rerun()
-    if st.sidebar.button("♻️ התחל מחדש"):
+    if c2.button("רענן ואפס הגדרות", use_container_width=True,
+                 help="מנקה נתונים *וגם* מאפס את הבחירות בכלי (מנגנונים, תיקוני מיפוי). "
+                      "החיבורים וההערות נשארים."):
         _read_cached.clear()
-        # מנקה בחירות וחישובים, אך משאיר את החיבורים (קישורי הגיליונות) על כנם
+        # מנקה בחירות וחישובים, אך משאיר את החיבורים, ההערות וכל השאר על כנם
         for k in list(st.session_state.keys()):
             if k.startswith(("mech_", "obj_", "api_", "tiebreak")) or k in (
                 "mechanisms",
@@ -66,10 +77,21 @@ def _sidebar_controls() -> None:
                 del st.session_state[k]
         st.rerun()
 
+    st.sidebar.divider()
+
+    # פתק-הערות אישי — נשמר לקובץ מקומי, נשמר בין סשנים, רק המשתמש מוחק.
+    if "user_notes" not in st.session_state:
+        st.session_state["user_notes"] = notes_store.load()
+    notes_val = st.sidebar.text_area(
+        "📝 הערות אישיות", key="user_notes", height=320,
+        placeholder="מקום לרשום לעצמך תזכורות על התהליך…",
+    )
+    notes_store.save(notes_val)
+
 
 def screen_connection() -> None:
     """שלב 0 — חיבור גיליונות + בניית שאילתת SOQL למילון השדות."""
-    st.header("שלב 0 — חיבור + שאילתת מילון")
+    st.header("1 · חיבור + שאילתת מילון")
 
     # ===== בונה שאילתת SOQL (שלב 1 לשעבר) — מקופל מעל החיבור =====
     with st.expander("בניית שאילתת מילון (FieldDefinition) ל-Inspector", expanded=False):
@@ -132,6 +154,13 @@ _STATUS_LABEL = {
 }
 _STATUS_ICON = {s: icon for s, (icon, _lbl) in _STATUS_LABEL.items()}
 
+# רקע-שורה עדין לסטטוסים שדורשים תשומת-לב (כל מה שאינו "התאמה") — כדי שיבלטו מיד.
+_ROW_TINT = {
+    mapper.STATUS_INVALID: "#fdecea",   # אדמדם
+    mapper.STATUS_MISSING: "#fff6e0",   # צהבהב
+    mapper.STATUS_NO_DICT: "#fdecea",   # אדמדם
+}
+
 
 def _apply_object_overrides(cols: list[mapper.TemplateColumn]) -> None:
     """מחיל override לאובייקט פר-עמודה מתוך ה-session (תיקון ידני במסך המיפוי)."""
@@ -163,14 +192,63 @@ def _run_mapping_pipeline(template_link: str, soql_link: str):
     return cols, parsed.warnings, parsed.objects
 
 
+def _validation_summary(grid, object_api: str, dictionary: dict) -> list:
+    """
+    בדיקת-נתונים על גריד-פלט (תאריכים/אורך-Id) + סיכום קצר במסך.
+    מחזיר marks: [(row0, col0, message)] לסימון על גיליון-הטעינה.
+    """
+    issues, marks = validator.validate_output_grid(grid, object_api, dictionary)
+    if not issues:
+        st.success("בדיקת נתונים: לא נמצאו בעיות ✅")
+        return marks
+    bad_dates = sum(1 for i in issues if i.kind == validator.KIND_BAD_DATE)
+    bad_ids = sum(1 for i in issues if i.kind == validator.KIND_BAD_ID)
+    parts = []
+    if bad_dates:
+        parts.append(f"{bad_dates} תאריכים")
+    if bad_ids:
+        parts.append(f"{bad_ids} מזהי-Id")
+    st.warning(
+        f"בדיקת נתונים: ⚠️ {len(issues)} בעיות ({' · '.join(parts)}). "
+        "התאים מסומנים אדום בגיליון-הטעינה, עם הסבר בריחוף."
+    )
+    with st.expander("פירוט הבעיות"):
+        for i in issues:
+            st.markdown(f"- **{i.location}** · {i.label}: {i.message}")
+    return marks
+
+
+def _recheck_button(key: str) -> None:
+    """כפתור 'בדוק שוב' — קורא נתונים טריים מהגיליונות ומריץ שוב את הבדיקה."""
+    if st.button("🔍 בדוק שוב", key=key,
+                 help="קורא נתונים עדכניים מהגיליונות ומריץ שוב את בדיקת הנתונים"):
+        _read_cached.clear()
+        st.rerun()
+
+
+def _apply_validation_marks(link: str, tab: str, grid, builder_colors, marks) -> None:
+    """
+    צובע מחדש את גיליון-הטעינה (אידמפוטנטי): מאפס רקע+הערות בטווח-הדאטה, מצייר את
+    צבעי-הבונה ואת תאי-השגיאה (אדום-עז 'error'), ומוסיף הערת-תא עם הסיבה.
+    מניח שהגריד כבר נכתב (write_grid) — חייב לרוץ במקום color_cells הרגיל.
+    """
+    n_cols = max((len(r) for r in grid), default=0)
+    sheets_io.reset_data_format(link, tab, 2, len(grid), n_cols)  # 2 = שורות-הכותרת
+    error_cells = [(r, c, "error") for r, c, _ in marks]
+    sheets_io.color_cells(link, tab, list(builder_colors) + error_cells)
+    if marks:
+        sheets_io.set_cell_notes(link, tab, [(r, c, m) for r, c, m in marks])
+
+
 def _object_selectbox(c: mapper.TemplateColumn, base_objs: list[str]) -> str:
     """dropdown אובייקט לשורה. מחזיר את האובייקט שנבחר (כולל '' ללא-מיפוי / ערך ידני)."""
-    opts = [_UNMAPPED] + base_objs + [_OTHER]
-    cur = c.object_api
+    opts = [_OTHER, _UNMAPPED] + base_objs
+    # עמודת-בקרה מגיעה ריקה (בלי הניחוש הגולמי) — אפשר עדיין לבחור ידנית אם הכלי טעה
+    cur = "" if c.status == mapper.STATUS_CONTROL else c.object_api
     if cur in base_objs:
         idx = opts.index(cur)
     elif not cur:
-        idx = 0
+        idx = opts.index(_UNMAPPED)
     else:
         idx = opts.index(_OTHER)
     sel = st.selectbox("אובייקט", opts, index=idx, key=f"obj_{c.index}",
@@ -187,31 +265,34 @@ def _object_selectbox(c: mapper.TemplateColumn, base_objs: list[str]) -> str:
 def _api_selectbox(c: mapper.TemplateColumn, obj: str, dictionary: dict) -> str:
     """dropdown API לשורה, תלוי באובייקט שנבחר. מחזיר את ה-API שנבחר (או ידני)."""
     disp2api = {f"{f.api} — {f.label}": f.api for f in mapper.candidates_for(obj, dictionary)}
-    opts = list(disp2api) + [_OTHER]
-    cur = c.clean_api or c.proposed_api
+    opts = [_OTHER, _BLANK] + list(disp2api)
+    # עמודת-בקרה מגיעה ריקה; שדה ללא ערך נברירת-מחדל ל"ריק" (לא מציע שדה שגוי אוטומטית)
+    cur = "" if c.status == mapper.STATUS_CONTROL else (c.clean_api or c.proposed_api)
     cur_disp = next((d for d, a in disp2api.items() if a == cur), None)
     if cur_disp:
         idx = opts.index(cur_disp)
     elif cur:
         idx = opts.index(_OTHER)
     else:
-        idx = 0 if disp2api else opts.index(_OTHER)
+        idx = opts.index(_BLANK)
     sel = st.selectbox("API", opts, index=idx, key=f"api_{c.index}", label_visibility="collapsed")
     if sel == _OTHER:
         default = cur if not cur_disp else ""
         return st.text_input("API (ידני)", value=default, key=f"apiother_{c.index}",
                              label_visibility="collapsed").strip()
+    if sel == _BLANK:
+        return ""
     return disp2api[sel]
 
 
 def screen_mapping() -> None:
     """שלבים 2–3 — מיפוי וולידציה עם עריכה inline."""
-    st.header("שלבים 2–3 — מיפוי וולידציה")
+    st.header("2 · מיפוי")
 
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
     if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
         return
 
     try:
@@ -227,7 +308,7 @@ def screen_mapping() -> None:
     legend = " · ".join(
         f"{icon} {lbl} ({counts.get(s, 0)})" for s, (icon, lbl) in _STATUS_LABEL.items()
     )
-    st.markdown(legend)
+    st.markdown(f"<div style='font-size:1.15rem'>{legend}</div>", unsafe_allow_html=True)
 
     for w in dict_warnings:
         st.warning(w)
@@ -249,13 +330,26 @@ def screen_mapping() -> None:
     corrections: dict[int, str] = {}
     for c in rows:
         col_name, col_obj, col_api, col_light, col_letter = st.columns(widths)
-        col_name.write(c.label or "—")
+        tint = _ROW_TINT.get(c.status)
+        bg = f"background:{tint};" if tint else ""
+        col_name.markdown(
+            f"<div style='{bg}padding:6px 8px;border-radius:4px'>{c.label or '—'}</div>",
+            unsafe_allow_html=True,
+        )
         with col_obj:
             chosen_obj = _object_selectbox(c, base_objs)
         with col_api:
             chosen_api = _api_selectbox(c, chosen_obj, dictionary)
-        col_light.write(_STATUS_ICON.get(c.status, ""))
-        col_letter.write(sheets_io.col_letter(c.index))
+        col_light.markdown(
+            f"<div style='{bg}font-size:1.6rem;text-align:center;border-radius:4px;"
+            f"padding:2px 0'>{_STATUS_ICON.get(c.status, '')}</div>",
+            unsafe_allow_html=True,
+        )
+        col_letter.markdown(
+            f"<div style='{bg}text-align:center;border-radius:4px;padding:6px 0'>"
+            f"{sheets_io.col_letter(c.index)}</div>",
+            unsafe_allow_html=True,
+        )
         if chosen_api and chosen_api != c.clean_api:
             corrections[c.index] = chosen_api
 
@@ -281,7 +375,7 @@ _N_MECHANISMS = 3
 
 def screen_identity() -> None:
     """מסך הרכבת מנגנוני-זיהוי (3 מנגנונים מדורגים) — המשתמש בוחר, הכלי מרכיב."""
-    st.header("מנגנוני זיהוי")
+    st.header("3 · מנגנוני זיהוי")
     st.write(
         "הרכב עד שלושה מנגנונים לזיהוי איש-קשר, לפי עדיפות (1→3). כל מנגנון = צירוף "
         "שדות שצריכים *כולם* להתאים. הראשון שמוצא התאמה מנצח."
@@ -290,7 +384,7 @@ def screen_identity() -> None:
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
     if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
         return
 
     try:
@@ -352,7 +446,7 @@ def screen_identity() -> None:
 
 def screen_db_export() -> None:
     """שלב 4 — שאילתות SELECT לייצוא DB + ולידציה של הגיליון המחובר."""
-    st.header("שלב 4 — ייצוא DB")
+    st.header("4 · ייצוא DB")
     st.write(
         "הרץ כל שאילתה ב-Salesforce Inspector, שמור את התוצאה בגיליון ה-DB בלשונית "
         "המוצגת, ואז לחץ *בדוק DB* לאימות."
@@ -361,7 +455,7 @@ def screen_db_export() -> None:
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
     if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
         return
 
     try:
@@ -396,7 +490,7 @@ def screen_db_export() -> None:
 
     db_link = st.session_state.get("link_db", "")
     if not db_link:
-        st.info("גיליון DB אינו מחובר — חזור לשלב 0 וחבר אותו.")
+        st.info("גיליון DB אינו מחובר — חזור למסך החיבור וחבר אותו.")
         return
 
     if st.button("בדוק DB"):
@@ -423,7 +517,7 @@ def screen_db_export() -> None:
 
 def screen_contacts() -> None:
     """שלב 5 — בניית גריד Contacts מוכן-לטעינה וכתיבתו ללשונית-פלט בטמפלייט."""
-    st.header("שלב 5 — בניית אנשי קשר לטעינה")
+    st.header("5 · בניית אנשי קשר לטעינה")
     st.write(
         "הכלי קורא את אנשי הקשר מהטמפלייט, מאחד כפילויות, ומשווה למאגר כדי לדעת מי "
         "כבר קיים (לעדכון) ומי חדש. רשומות לעדכון מקבלות גם השלמת פרטים חסרים מהמאגר. "
@@ -436,14 +530,14 @@ def screen_contacts() -> None:
     mechanisms = st.session_state.get("mechanisms")
 
     if not template_link or not soql_link or not db_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
         return
     if not mechanisms:
         st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
         return
 
     try:
-        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+        cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
         tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
         split_records = splitter.split_object(
             "Contact", tmpl_rows, cols,
@@ -492,6 +586,10 @@ def screen_contacts() -> None:
     else:
         st.info("אין אנשי קשר בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
 
+    # ===== בדיקת נתונים (אוטומטית) =====
+    _validation_summary(grid, "Contact", dictionary)
+    _recheck_button("recheck_contacts")
+
     # ===== כתיבה =====
     st.divider()
     out_tab = template_config.OUTPUT_TAB_CONTACTS
@@ -530,7 +628,9 @@ def screen_contacts() -> None:
             sheets_io.ensure_tab(template_link, out_tab)
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, colors2)
+            # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
+            marks = _validation_summary(grid2, "Contact", dictionary)
+            _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
             if remaining:
@@ -560,7 +660,7 @@ def screen_campaigns() -> None:
     מקביל ל-screen_contacts, אך הזיהוי הוא לפי **שם** בלבד (CAMPAIGN_MECHANISMS) —
     לא מנגנוני-הזיהוי של Contacts. כל שורות-ההרשמה לאותו אירוע מתקבצות לקמפיין אחד.
     """
-    st.header("שלב 5 — בניית קמפיינים לטעינה")
+    st.header("6 · בניית קמפיינים לטעינה")
     st.write(
         "הכלי קורא את האירועים מהטמפלייט, מאחד שורות עם אותו שם-אירוע לקמפיין אחד, "
         "ומשווה למאגר כדי לדעת אילו קמפיינים כבר קיימים (לעדכון) ואילו חדשים. "
@@ -572,13 +672,13 @@ def screen_campaigns() -> None:
     db_link = st.session_state.get("link_db", "")
 
     if not template_link or not soql_link or not db_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
         return
 
     mechanisms = template_config.CAMPAIGN_MECHANISMS
 
     try:
-        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+        cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
         tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
         split_records = splitter.split_object(
             template_config.CAMPAIGN_OBJECT, tmpl_rows, cols,
@@ -625,6 +725,10 @@ def screen_campaigns() -> None:
     else:
         st.info("אין קמפיינים בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
 
+    # ===== בדיקת נתונים (אוטומטית) =====
+    _validation_summary(grid, template_config.CAMPAIGN_OBJECT, dictionary)
+    _recheck_button("recheck_campaigns")
+
     # ===== כתיבה =====
     st.divider()
     out_tab = template_config.OUTPUT_TAB_CAMPAIGNS
@@ -659,7 +763,9 @@ def screen_campaigns() -> None:
             sheets_io.ensure_tab(template_link, out_tab)
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, colors2)
+            # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
+            marks = _validation_summary(grid2, template_config.CAMPAIGN_OBJECT, dictionary)
+            _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
             if remaining:
@@ -690,7 +796,7 @@ def screen_relationship() -> None:
     הצינור קורא את "פלט - Contacts" לבניית local_key→Id, גוזר קשרים מהטמפלייט,
     מסנן זוגות קיימים-ב-DB, וכותב את החדשים ללשונית "פלט - Relationships".
     """
-    st.header("שלב 5 — בניית קשרים לטעינה")
+    st.header("7 · בניית קשרים לטעינה")
     st.write(
         "הכלי גוזר קשרים בין אנשי-קשר ראשי לנוסף מכל שורה, ומסנן זוגות שכבר קיימים "
         "במאגר. **לחץ על הכפתור לאחר שטענת את Contacts לסיילספורס וה-Ids הודבקו חזרה "
@@ -703,7 +809,7 @@ def screen_relationship() -> None:
     mechanisms = st.session_state.get("mechanisms")
 
     if not template_link or not soql_link or not db_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
         return
     if not mechanisms:
         st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
@@ -714,7 +820,7 @@ def screen_relationship() -> None:
             # רוקנים מטמון כדי לקרוא Ids עדכניים מ-"פלט - Contacts" (המשתמש הדביק אותם)
             _read_cached.clear()
 
-            cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+            cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
             tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
 
             # ריצת Contacts (אותה ריצה כמו screen_contacts) לבניית local_key → record_idx
@@ -776,7 +882,9 @@ def screen_relationship() -> None:
             sheets_io.ensure_tab(template_link, out_tab)
             n = sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
+            marks = _validation_summary(grid, template_config.RELATIONSHIP_OBJECT, dictionary)
+            _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
             _read_cached.clear()
 
             msg = f"נכתבו {new_count} קשרים חדשים ללשונית {out_tab}."
@@ -797,7 +905,7 @@ def screen_campaign_members() -> None:
     לכל שורה עם "משתתף באירוע"=TRUE (לראשי / לנוסף) נוצרת רשומת CampaignMember.
     v1: טוען את כולם ללא בדיקת-קיום מול DB.
     """
-    st.header("שלב 5 — בניית CampaignMember")
+    st.header("8 · בניית CampaignMember")
     st.write(
         "הכלי יוצר רשומת השתתפות לכל אדם שסומן כ-'משתתף באירוע', ומקשר אותו "
         "לקמפיין המתאים. **לחץ על הכפתור לאחר שטענת Contacts ו-Campaigns לסיילספורס "
@@ -810,7 +918,7 @@ def screen_campaign_members() -> None:
     mechanisms = st.session_state.get("mechanisms")
 
     if not template_link or not soql_link or not db_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
         return
     if not mechanisms:
         st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
@@ -820,7 +928,7 @@ def screen_campaign_members() -> None:
         try:
             _read_cached.clear()  # מטמון מתרענן — נקרא Ids עדכניים מגיליונות הפלט
 
-            cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+            cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
             tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
 
             # פיצול + dedup Contacts — לבניית (source_row, block) → local_key
@@ -894,7 +1002,9 @@ def screen_campaign_members() -> None:
             sheets_io.ensure_tab(template_link, out_tab)
             sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
+            marks = _validation_summary(grid, template_config.CM_OBJECT, dictionary)
+            _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
             _read_cached.clear()
 
             msg = f"נכתבו {written} רשומות CampaignMember ללשונית {out_tab}."
@@ -906,94 +1016,15 @@ def screen_campaign_members() -> None:
             st.error(f"שגיאה בבניית CampaignMember:\n\n{e}")
 
 
-def screen_validation() -> None:
-    """שלב 6 — ולידציה: ריכוז כל הבעיות (מיפוי/תאריכים/אורך-Id) ללשונית 'בעיות'.
-
-    מעבר-בדיקה לפני בנייה/טעינה. קורא בלבד — הפלט היחיד הוא לשונית 'בעיות'.
-    """
-    st.header("שלב 6 — ולידציה (בעיות)")
-    st.write(
-        "הכלי עובר על הטמפלייט ומרכז במקום אחד את כל מה שעלול לחסום טעינה תקינה: "
-        "עמודות שטרם מופו, שמות-API שגויים, תאריכים לא-תקינים, ומזהי-Id באורך לא-צפוי "
-        "במאגר. התוצאה נכתבת ללשונית **בעיות** בתוך הטמפלייט."
-    )
-
-    template_link = st.session_state.get("link_template", "")
-    soql_link = st.session_state.get("link_soql", "")
-    db_link = st.session_state.get("link_db", "")
-    if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
-        return
-
-    try:
-        cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
-        tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
-
-        issues = validator.validate_mapping(cols)
-        issues += validator.validate_dates(
-            cols, tmpl_rows, dictionary,
-            data_start_row=template_config.TEMPLATE_DATA_START_ROW,
-        )
-        # בדיקת אורך-Id רצה רק אם גיליון ה-DB מחובר ונקרא בהצלחה
-        if db_link:
-            db_by_object: dict[str, list[dict]] = {}
-            for obj in {c.object_api for c in cols if c.object_api}:
-                tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
-                try:
-                    db_rows = _read_cached(db_link, tab_name)
-                except Exception:  # noqa: BLE001 — לשונית חסרה → מדלגים על האובייקט
-                    continue
-                db_by_object[obj] = sheets_io.rows_to_dicts(db_rows)
-            issues += validator.validate_ids(db_by_object)
-    except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
-        st.error(f"שגיאה בהרצת הוולידציה:\n\n{e}")
-        return
-
-    grid, cell_colors = validator.build_issues_grid(issues)
-
-    # ===== סיכום-נורות =====
-    errors = sum(1 for i in issues if i.severity == validator.SEVERITY_ERROR)
-    warnings = sum(1 for i in issues if i.severity == validator.SEVERITY_WARNING)
-    m1, m2 = st.columns(2)
-    m1.metric("🔴 שגיאות", errors)
-    m2.metric("🟡 אזהרות", warnings)
-    if not issues:
-        st.success("לא נמצאו בעיות — הטמפלייט נראה תקין לבנייה.")
-
-    # ===== תצוגה מקדימה =====
-    if len(grid) > 2:
-        st.subheader("רשימת הבעיות")
-        st.dataframe(
-            {grid[0][col]: [row[col] for row in grid[2:]] for col in range(len(grid[0]))},
-            use_container_width=True,
-        )
-
-    # ===== כתיבה =====
-    st.divider()
-    out_tab = template_config.OUTPUT_TAB_ISSUES
-    st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
-    if st.button("כתוב לשונית בעיות"):
-        try:
-            sheets_io.ensure_tab(template_link, out_tab)
-            sheets_io.write_grid(template_link, out_tab, grid)
-            sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, cell_colors)
-            _read_cached.clear()
-            st.success(f"נכתבו {len(issues)} בעיות ללשונית {out_tab} ({errors} שגיאות · {warnings} אזהרות).")
-        except Exception as e:  # noqa: BLE001
-            st.error(f"כשל בכתיבה לטמפלייט: {e}")
-
-
 SCREENS = {
-    "שלב 0 — חיבור + שאילתה": screen_connection,
-    "שלבים 2–3 — מיפוי": screen_mapping,
-    "מנגנוני זיהוי": screen_identity,
-    "שלב 4 — ייצוא DB": screen_db_export,
-    "שלב 5 — בניית Contacts": screen_contacts,
-    "שלב 5 — בניית Campaigns": screen_campaigns,
-    "שלב 5 — בניית Relationships": screen_relationship,
-    "שלב 5 — CampaignMember": screen_campaign_members,
-    "שלב 6 — ולידציה": screen_validation,
+    "1 · חיבור": screen_connection,
+    "2 · מיפוי": screen_mapping,
+    "3 · מנגנוני זיהוי": screen_identity,
+    "4 · ייצוא DB": screen_db_export,
+    "5 · בניית Contacts": screen_contacts,
+    "6 · בניית Campaigns": screen_campaigns,
+    "7 · בניית Relationships": screen_relationship,
+    "8 · בניית CampaignMember": screen_campaign_members,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))

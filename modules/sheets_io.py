@@ -191,6 +191,7 @@ _CELL_COLORS = {
     "yellow": {"red": 1.00, "green": 0.95, "blue": 0.70},
     "red":    {"red": 0.96, "green": 0.78, "blue": 0.78},
     "orange": {"red": 1.00, "green": 0.80, "blue": 0.40},  # הכרעה-בשילוב — בולט לעין
+    "error":  {"red": 0.92, "green": 0.49, "blue": 0.46},  # שגיאת-ולידציה — אדום-עז, נבדל מ"red"
     # גווני-רקע עדינים להפרדת בלוקים בלשונית הטיפול-הידני (מתחלפים מקבוצה לקבוצה)
     "band_a": {"red": 0.95, "green": 0.95, "blue": 0.95},  # אפור-בהיר
     "band_b": {"red": 0.90, "green": 0.94, "blue": 1.00},  # כחול-בהיר
@@ -278,6 +279,85 @@ def set_checkbox_column(
         )
         .execute()
     )
+
+
+def reset_data_format(
+    link_or_id: str, tab: str, start_row0: int, end_row0: int, n_cols: int
+) -> None:
+    """
+    מאפס רקע (לבן) ומנקה הערות-תא בטווח-דאטה [start_row0:end_row0, 0:n_cols].
+    נועד לאידמפוטנטיות: לפני צביעה/הערות מחדש, מנקה שיירים מבנייה קודמת.
+    טווח ריק → לא עושה כלום.
+    """
+    if end_row0 <= start_row0 or n_cols <= 0:
+        return
+    sid = extract_id(link_or_id)
+    sheet_id = _sheet_id(link_or_id, tab)
+    (
+        _sheets()
+        .spreadsheets()
+        .batchUpdate(
+            spreadsheetId=sid,
+            body={
+                "requests": [
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": start_row0,
+                                "endRowIndex": end_row0,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": n_cols,
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 1, "green": 1, "blue": 1}
+                                },
+                                "note": "",
+                            },
+                            "fields": "userEnteredFormat.backgroundColor,note",
+                        }
+                    }
+                ]
+            },
+        )
+        .execute()
+    )
+
+
+def set_cell_notes(link_or_id: str, tab: str, updates: list[tuple[int, int, str]]) -> int:
+    """
+    מוסיף הערת-תא (comment שמופיע בריחוף) לתאים בודדים. updates: (row0, col0, note).
+    משאיר את ערך-התא כפי שהוא (משנה רק את ההערה). רשימה ריקה → 0 ללא קריאה.
+    מחזיר את מספר התאים שעודכנו.
+    """
+    if not updates:
+        return 0
+    sid = extract_id(link_or_id)
+    sheet_id = _sheet_id(link_or_id, tab)
+    requests = [
+        {
+            "updateCells": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": row0,
+                    "endRowIndex": row0 + 1,
+                    "startColumnIndex": col0,
+                    "endColumnIndex": col0 + 1,
+                },
+                "rows": [{"values": [{"note": note or ""}]}],
+                "fields": "note",
+            }
+        }
+        for row0, col0, note in updates
+    ]
+    (
+        _sheets()
+        .spreadsheets()
+        .batchUpdate(spreadsheetId=sid, body={"requests": requests})
+        .execute()
+    )
+    return len(requests)
 
 
 def col_letter(col0: int) -> str:

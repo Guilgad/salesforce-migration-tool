@@ -57,6 +57,7 @@ tmp/
 
 # === נתוני-ריצה מקומיים ===
 .recent_sheets.json
+.notes.txt
 
 # === קבצים זמניים של תהליך הפיתוח ===
 _commitmsg.txt
