@@ -105,3 +105,7 @@ CAMPAIGN_MECHANISMS: list[list[str]] = [[CAMPAIGN_NAME_FIELD]]
 # לשוניות-פלט לקמפיינים (בתוך הטמפלייט, כמו Contacts).
 OUTPUT_TAB_CAMPAIGNS = "פלט - Campaigns"
 OUTPUT_TAB_MANUAL_CAMPAIGNS = "טיפול ידני - Campaigns"
+
+# ===== ולידציה (שלב 6) =====
+# לשונית שאליה נכתבת רשימת הבעיות (מיפוי/תאריכים/אורך-Id) לפני בנייה/טעינה.
+OUTPUT_TAB_ISSUES = "בעיות"

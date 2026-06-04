@@ -9,6 +9,7 @@ from config import template_config
 from modules import (
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
     splitter, dedup_engine, output_writer, relationship_builder, campaign_member_builder,
+    validator,
 )
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
@@ -893,6 +894,84 @@ def screen_campaign_members() -> None:
             st.error(f"שגיאה בבניית CampaignMember:\n\n{e}")
 
 
+def screen_validation() -> None:
+    """שלב 6 — ולידציה: ריכוז כל הבעיות (מיפוי/תאריכים/אורך-Id) ללשונית 'בעיות'.
+
+    מעבר-בדיקה לפני בנייה/טעינה. קורא בלבד — הפלט היחיד הוא לשונית 'בעיות'.
+    """
+    st.header("שלב 6 — ולידציה (בעיות)")
+    st.write(
+        "הכלי עובר על הטמפלייט ומרכז במקום אחד את כל מה שעלול לחסום טעינה תקינה: "
+        "עמודות שטרם מופו, שמות-API שגויים, תאריכים לא-תקינים, ומזהי-Id באורך לא-צפוי "
+        "במאגר. התוצאה נכתבת ללשונית **בעיות** בתוך הטמפלייט."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    db_link = st.session_state.get("link_db", "")
+    if not template_link or not soql_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
+        return
+
+    try:
+        cols, _warnings, dictionary = _run_mapping_pipeline(template_link, soql_link)
+        tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
+
+        issues = validator.validate_mapping(cols)
+        issues += validator.validate_dates(
+            cols, tmpl_rows, dictionary,
+            data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+        )
+        # בדיקת אורך-Id רצה רק אם גיליון ה-DB מחובר ונקרא בהצלחה
+        if db_link:
+            db_by_object: dict[str, list[dict]] = {}
+            for obj in {c.object_api for c in cols if c.object_api}:
+                tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
+                try:
+                    db_rows = _read_cached(db_link, tab_name)
+                except Exception:  # noqa: BLE001 — לשונית חסרה → מדלגים על האובייקט
+                    continue
+                db_by_object[obj] = sheets_io.rows_to_dicts(db_rows)
+            issues += validator.validate_ids(db_by_object)
+    except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
+        st.error(f"שגיאה בהרצת הוולידציה:\n\n{e}")
+        return
+
+    grid, cell_colors = validator.build_issues_grid(issues)
+
+    # ===== סיכום-נורות =====
+    errors = sum(1 for i in issues if i.severity == validator.SEVERITY_ERROR)
+    warnings = sum(1 for i in issues if i.severity == validator.SEVERITY_WARNING)
+    m1, m2 = st.columns(2)
+    m1.metric("🔴 שגיאות", errors)
+    m2.metric("🟡 אזהרות", warnings)
+    if not issues:
+        st.success("לא נמצאו בעיות — הטמפלייט נראה תקין לבנייה.")
+
+    # ===== תצוגה מקדימה =====
+    if len(grid) > 2:
+        st.subheader("רשימת הבעיות")
+        st.dataframe(
+            {grid[0][col]: [row[col] for row in grid[2:]] for col in range(len(grid[0]))},
+            use_container_width=True,
+        )
+
+    # ===== כתיבה =====
+    st.divider()
+    out_tab = template_config.OUTPUT_TAB_ISSUES
+    st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
+    if st.button("כתוב לשונית בעיות"):
+        try:
+            sheets_io.ensure_tab(template_link, out_tab)
+            sheets_io.write_grid(template_link, out_tab, grid)
+            sheets_io.set_tab_rtl(template_link, out_tab)
+            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            _read_cached.clear()
+            st.success(f"נכתבו {len(issues)} בעיות ללשונית {out_tab} ({errors} שגיאות · {warnings} אזהרות).")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"כשל בכתיבה לטמפלייט: {e}")
+
+
 SCREENS = {
     "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
@@ -902,6 +981,7 @@ SCREENS = {
     "שלב 5 — בניית Campaigns": screen_campaigns,
     "שלב 5 — בניית Relationships": screen_relationship,
     "שלב 5 — CampaignMember": screen_campaign_members,
+    "שלב 6 — ולידציה": screen_validation,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))
