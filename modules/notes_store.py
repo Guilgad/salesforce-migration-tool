@@ -6,13 +6,16 @@
 """
 from __future__ import annotations
 
-from config import settings
+from pathlib import Path
+
+# שורש הפרויקט = שני רמות מעל modules/notes_store.py
+_NOTES_FILE = Path(__file__).resolve().parent.parent / ".notes.txt"
 
 
 def load() -> str:
     """טוען את תוכן הפתק. חסין לקובץ חסר/פגום (מחזיר '')."""
     try:
-        with open(settings.NOTES_FILE, encoding="utf-8") as f:
+        with open(_NOTES_FILE, encoding="utf-8") as f:
             return f.read()
     except (FileNotFoundError, OSError):
         return ""
@@ -21,7 +24,7 @@ def load() -> str:
 def save(text: str) -> None:
     """שומר את תוכן הפתק. כשל-כתיבה לא קריטי (הפתק פשוט לא יישמר הפעם)."""
     try:
-        with open(settings.NOTES_FILE, "w", encoding="utf-8") as f:
+        with open(_NOTES_FILE, "w", encoding="utf-8") as f:
             f.write(text or "")
     except OSError:
         pass
