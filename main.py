@@ -8,7 +8,7 @@ import streamlit as st
 from config import template_config
 from modules import (
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
-    splitter, dedup_engine, output_writer, relationship_builder,
+    splitter, dedup_engine, output_writer, relationship_builder, campaign_member_builder,
 )
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
@@ -777,6 +777,122 @@ def screen_relationship() -> None:
             st.error(f"שגיאה בבניית גיליון הקשרים:\n\n{e}")
 
 
+def screen_campaign_members() -> None:
+    """שלב 5 (CampaignMember) — גזירת רשומות השתתפות וכתיבתן לגיליון-טעינה.
+
+    כפתור יחיד — לאחר שטענת Contacts ו-Campaigns וה-Ids הודבקו בחזרה.
+    לכל שורה עם "משתתף באירוע"=TRUE (לראשי / לנוסף) נוצרת רשומת CampaignMember.
+    v1: טוען את כולם ללא בדיקת-קיום מול DB.
+    """
+    st.header("שלב 5 — בניית CampaignMember")
+    st.write(
+        "הכלי יוצר רשומת השתתפות לכל אדם שסומן כ-'משתתף באירוע', ומקשר אותו "
+        "לקמפיין המתאים. **לחץ על הכפתור לאחר שטענת Contacts ו-Campaigns לסיילספורס "
+        "וה-Ids הודבקו חזרה בלשוניות הפלט שלהם.**"
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    db_link = st.session_state.get("link_db", "")
+    mechanisms = st.session_state.get("mechanisms")
+
+    if not template_link or not soql_link or not db_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        return
+    if not mechanisms:
+        st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
+        return
+
+    if st.button("בנה וכתוב CampaignMember"):
+        try:
+            _read_cached.clear()  # מטמון מתרענן — נקרא Ids עדכניים מגיליונות הפלט
+
+            cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+            tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
+
+            # פיצול + dedup Contacts — לבניית (source_row, block) → local_key
+            contact_split = splitter.split_object(
+                "Contact", tmpl_rows, cols,
+                data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+            )
+            contact_dedup = dedup_engine.deduplicate(
+                [r.values for r in contact_split], mechanisms, [],
+                digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
+                local_key_prefix="C",
+            )
+
+            # פיצול + dedup Campaigns — לבניית source_row → campaign_local_key
+            campaign_split = splitter.split_object(
+                template_config.CAMPAIGN_OBJECT, tmpl_rows, cols,
+                data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+            )
+            campaign_dedup = dedup_engine.deduplicate(
+                [r.values for r in campaign_split], template_config.CAMPAIGN_MECHANISMS, [],
+                local_key_prefix="K",
+            )
+
+            # local_key → sf_id מגיליונות הפלט (אחרי שהמשתמש הדביק Ids)
+            try:
+                contacts_out = sheets_io.read_values(template_link, template_config.OUTPUT_TAB_CONTACTS)
+            except Exception:  # noqa: BLE001
+                contacts_out = []
+            try:
+                campaigns_out = sheets_io.read_values(template_link, template_config.OUTPUT_TAB_CAMPAIGNS)
+            except Exception:  # noqa: BLE001
+                campaigns_out = []
+
+            contact_id_map = relationship_builder.contact_id_map_from_grid(contacts_out)
+            campaign_id_map = relationship_builder.contact_id_map_from_grid(campaigns_out)
+
+            if not contact_id_map and not campaign_id_map:
+                st.error(
+                    "לא נמצאו Ids ב-'פלט - Contacts' וב-'פלט - Campaigns' — "
+                    "יש לטעון את שניהם ולהדביק את ה-Ids לפני הרצת שלב זה."
+                )
+                return
+
+            field_cols = campaign_member_builder._cm_field_columns(
+                cols, template_config.CM_OBJECT
+            )
+
+            cm_records = campaign_member_builder.derive_campaign_members(
+                tmpl_rows, cols, contact_split, contact_dedup,
+                campaign_split, campaign_dedup,
+                contact_id_map, campaign_id_map,
+                data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+                block_primary=template_config.CONTACT_BLOCK_PRIMARY,
+                block_secondary=template_config.CONTACT_BLOCK_SECONDARY,
+                cm_object=template_config.CM_OBJECT,
+                cm_participating_label=template_config.CM_PARTICIPATING_LABEL,
+            )
+
+            grid, cell_colors = campaign_member_builder.build_campaign_member_grid(
+                cm_records, field_cols
+            )
+
+            written = max(len(grid) - 2, 0)
+            pending = sum(1 for r in cm_records if r.warning)
+
+            for r in cm_records:
+                if r.warning:
+                    st.warning(r.warning)
+
+            out_tab = template_config.OUTPUT_TAB_CM
+            sheets_io.ensure_tab(template_link, out_tab)
+            sheets_io.write_grid(template_link, out_tab, grid)
+            sheets_io.set_tab_rtl(template_link, out_tab)
+            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            _read_cached.clear()
+
+            msg = f"נכתבו {written} רשומות CampaignMember ללשונית {out_tab}."
+            if pending:
+                msg += f" {pending} רשומות ממתינות ל-Id (Contacts/Campaigns שטרם נטענו)."
+            st.success(msg)
+
+        except Exception as e:  # noqa: BLE001
+            st.error(f"שגיאה בבניית CampaignMember:\n\n{e}")
+
+
 SCREENS = {
     "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
@@ -785,6 +901,7 @@ SCREENS = {
     "שלב 5 — בניית Contacts": screen_contacts,
     "שלב 5 — בניית Campaigns": screen_campaigns,
     "שלב 5 — בניית Relationships": screen_relationship,
+    "שלב 5 — CampaignMember": screen_campaign_members,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))

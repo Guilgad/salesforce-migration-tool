@@ -86,6 +86,14 @@ CONTACT_BLOCK_PRIMARY = "פרטי איש הקשר ראשי"
 CONTACT_BLOCK_SECONDARY = "עבור איש קשר נוסף שמקושר לראשון (בן/בת זוג, ילד/ה..)"
 OUTPUT_TAB_RELATIONSHIPS = "פלט - Relationships"
 
+# ===== CampaignMember (שלב 5 חלק ד') =====
+# v1: טוען את כולם ללא בדיקת-קיום מול DB (מוסכם בתוכנית).
+CM_OBJECT = "CampaignMember"
+CM_CONTACT_ID_FIELD = "ContactId"    # שדה lookup סטנדרטי (נגזר, לא מה-mapper)
+CM_CAMPAIGN_ID_FIELD = "CampaignId"  # שדה lookup סטנדרטי (נגזר, לא מה-mapper)
+CM_PARTICIPATING_LABEL = "משתתף באירוע"  # תווית עמודת-הבקרה (STATUS_CONTROL)
+OUTPUT_TAB_CM = "פלט - CampaignMember"
+
 # ===== Campaigns (שלב 5 חלק ב') =====
 # קמפיינים אינם משתמשים במנגנוני-הזיהוי של Contacts — הם מזוהים לפי **שם** בלבד
 # (מנורמל: חיתוך רווחים, casefold — דרך identity.normalize). אותו מנוע dedup גנרי.
