@@ -109,3 +109,13 @@ OUTPUT_TAB_MANUAL_CAMPAIGNS = "טיפול ידני - Campaigns"
 # ===== ולידציה (שלב 6) =====
 # לשונית שאליה נכתבת רשימת הבעיות (מיפוי/תאריכים/אורך-Id) לפני בנייה/טעינה.
 OUTPUT_TAB_ISSUES = "בעיות"
+
+# ===== שדות-DB נדרשים מעבר למה שבטמפלייט =====
+# שדות שהכלי צריך לקרוא מגיליון ה-DB אבל לא קיימים בטמפלייט (עמודות נגזרות, lookups).
+# מסך "ייצוא DB" מוסיף אותם אוטומטית לשאילתה.
+REQUIRED_DB_FIELDS: dict[str, list[str]] = {
+    # לקשרים: שני שדות ה-lookup נגזרים בזמן-ריצה מ-Contacts, לא ממולאים בטמפלייט
+    RELATIONSHIP_OBJECT: [RELATIONSHIP_CONTACT_A_FIELD, RELATIONSHIP_CONTACT_B_FIELD],
+    # ל-CampaignMember: שדות ה-lookup נגזרים, לא ממולאים בטמפלייט
+    CM_OBJECT: [CM_CONTACT_ID_FIELD, CM_CAMPAIGN_ID_FIELD],
+}

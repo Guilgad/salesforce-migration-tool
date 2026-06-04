@@ -472,6 +472,13 @@ def screen_db_export() -> None:
             if c.clean_api not in fields:
                 fields.append(c.clean_api)
 
+    # שדות נגזרים שאינם בטמפלייט אך נדרשים לקריאת ה-DB (כגון lookups של Relationships)
+    for obj, extra in template_config.REQUIRED_DB_FIELDS.items():
+        if obj in queries:
+            for f in extra:
+                if f not in queries[obj]:
+                    queries[obj].append(f)
+
     if not queries:
         st.warning("אין עמודות ממופות תקפות — השלם קודם את המיפוי.")
         return
