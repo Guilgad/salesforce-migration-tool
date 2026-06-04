@@ -179,6 +179,7 @@ def deduplicate(
     db_records: list[dict],
     *,
     digits_only_fields: set[str] | None = None,
+    local_key_prefix: str = "C",
 ) -> DedupResult:
     """
     מקבץ רשומות לאנשים ומכריע Insert/Upsert מול ה-DB.
@@ -187,6 +188,7 @@ def deduplicate(
     mechanisms: מנגנונים מסודרים לפי עדיפות (כל מנגנון = רשימת שמות-API), מופעלים בלבד.
     db_records: ייצוא ה-DB כ-{api: value}, כולל "Id".
     digits_only_fields: שדות לנירמול ספרות-בלבד (פנימי; לא נוגע בדאטה הנטענת).
+    local_key_prefix: קידומת ה-local_key ("C" לאנשי-קשר, "K" לקמפיינים).
     """
     digit_fields = digits_only_fields or set()
     prepped = [_prep(r, digit_fields) for r in records]
@@ -211,7 +213,7 @@ def deduplicate(
 
         persons.append(
             PersonResult(
-                local_key=f"C{n}",
+                local_key=f"{local_key_prefix}{n}",
                 record_indices=member_indices,
                 action=action,
                 sf_id=sf_id,

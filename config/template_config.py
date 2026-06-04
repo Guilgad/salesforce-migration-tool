@@ -73,3 +73,27 @@ OUTPUT_TAB_CONTACTS = "פלט - Contacts"
 # לשונית "טיפול ידני": רשומות דו-משמעיות/ללא-זיהוי שלא נכנסו לטעינה — רשומת-הקלט
 # לצד מועמדי-המאגר, עם עמודת "בחר" שהמשתמש מסמן בה את הנכונה (פרוסה 8).
 OUTPUT_TAB_MANUAL_CONTACTS = "טיפול ידני - Contacts"
+
+# ===== Relationships (שלב 5 חלק ג') =====
+# קשרים הם גיליון נגזר: לכל שורה עם שני אנשי-קשר (ראשי + נוסף) נגזר קשר אחד.
+# כיוון אחד בלבד — NPSP יוצר את ההפוך אוטומטית. רק זוגות חדשים נכנסים לפלט.
+RELATIONSHIP_OBJECT = "npe4__Relationship__c"
+RELATIONSHIP_CONTACT_A_FIELD = "npe4__Contact__c"
+RELATIONSHIP_CONTACT_B_FIELD = "npe4__RelatedContact__c"
+RELATIONSHIP_TYPE_FIELD = "npe4__Type__c"
+# שמות הבלוקים (חייב להיות זהה לשמות ב-BLOCK_TO_OBJECT).
+CONTACT_BLOCK_PRIMARY = "פרטי איש הקשר ראשי"
+CONTACT_BLOCK_SECONDARY = "עבור איש קשר נוסף שמקושר לראשון (בן/בת זוג, ילד/ה..)"
+OUTPUT_TAB_RELATIONSHIPS = "פלט - Relationships"
+
+# ===== Campaigns (שלב 5 חלק ב') =====
+# קמפיינים אינם משתמשים במנגנוני-הזיהוי של Contacts — הם מזוהים לפי **שם** בלבד
+# (מנורמל: חיתוך רווחים, casefold — דרך identity.normalize). אותו מנוע dedup גנרי.
+CAMPAIGN_OBJECT = "Campaign"
+# שדה ה-dedup לקמפיינים. חייב להתאים ל-clean_api שה-mapper מייצר לעמודת שם-הקמפיין.
+CAMPAIGN_NAME_FIELD = "Name"
+# מנגנון יחיד לפי שם — הקלט ל-dedup_engine.deduplicate עבור קמפיינים.
+CAMPAIGN_MECHANISMS: list[list[str]] = [[CAMPAIGN_NAME_FIELD]]
+# לשוניות-פלט לקמפיינים (בתוך הטמפלייט, כמו Contacts).
+OUTPUT_TAB_CAMPAIGNS = "פלט - Campaigns"
+OUTPUT_TAB_MANUAL_CAMPAIGNS = "טיפול ידני - Campaigns"

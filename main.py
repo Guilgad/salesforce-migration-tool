@@ -8,7 +8,7 @@ import streamlit as st
 from config import template_config
 from modules import (
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
-    splitter, dedup_engine, output_writer,
+    splitter, dedup_engine, output_writer, relationship_builder,
 )
 
 st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
@@ -546,12 +546,245 @@ def screen_contacts() -> None:
             st.error(f"כשל בכתיבה לטמפלייט: {e}")
 
 
+def screen_campaigns() -> None:
+    """שלב 5 (קמפיינים) — בניית גריד Campaigns מוכן-לטעינה וכתיבתו ללשונית-פלט בטמפלייט.
+
+    מקביל ל-screen_contacts, אך הזיהוי הוא לפי **שם** בלבד (CAMPAIGN_MECHANISMS) —
+    לא מנגנוני-הזיהוי של Contacts. כל שורות-ההרשמה לאותו אירוע מתקבצות לקמפיין אחד.
+    """
+    st.header("שלב 5 — בניית קמפיינים לטעינה")
+    st.write(
+        "הכלי קורא את האירועים מהטמפלייט, מאחד שורות עם אותו שם-אירוע לקמפיין אחד, "
+        "ומשווה למאגר כדי לדעת אילו קמפיינים כבר קיימים (לעדכון) ואילו חדשים. "
+        "התוצאה נכתבת ללשונית מוכנה-לטעינה בתוך הטמפלייט."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    db_link = st.session_state.get("link_db", "")
+
+    if not template_link or not soql_link or not db_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        return
+
+    mechanisms = template_config.CAMPAIGN_MECHANISMS
+
+    try:
+        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+        tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
+        split_records = splitter.split_object(
+            template_config.CAMPAIGN_OBJECT, tmpl_rows, cols,
+            data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+        )
+        record_values = [r.values for r in split_records]
+        source_rows = [r.source_row for r in split_records]
+
+        db_rows = _read_cached(db_link, template_config.DB_TAB_NAMES[template_config.CAMPAIGN_OBJECT])
+        db_records = sheets_io.rows_to_dicts(db_rows)
+        db_by_id = {r["Id"]: r for r in db_records if r.get("Id")}
+
+        dedup = dedup_engine.deduplicate(
+            record_values, mechanisms, db_records, local_key_prefix="K",
+        )
+        grid, cell_colors = output_writer.build_campaigns_grid(dedup, record_values, cols, db_by_id)
+        manual_grid = output_writer.build_manual_grid(
+            dedup, record_values, cols, db_by_id, source_rows,
+            object_api=template_config.CAMPAIGN_OBJECT,
+        )
+    except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
+        st.error(f"שגיאה בהרצת הצינור:\n\n{e}")
+        return
+
+    # ===== סיכום-נורות =====
+    c = dedup.counts
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("חדשים", c.get("inserts", 0))
+    m2.metric("לעדכון", c.get("upserts", 0))
+    m3.metric("⚠️ נמצאו כמה התאמות", c.get("ambiguous", 0))
+    m4.metric("⚠️ ללא שם", c.get("unkeyed", 0))
+    st.caption(
+        f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} קמפיינים ייחודיים · "
+        f"{len(db_records)} רשומות במאגר"
+    )
+
+    # ===== תצוגה מקדימה =====
+    if len(grid) > 2:
+        st.subheader("תצוגה מקדימה")
+        st.dataframe(
+            {grid[0][col]: [row[col] for row in grid[2:]] for col in range(len(grid[0]))},
+            use_container_width=True,
+        )
+    else:
+        st.info("אין קמפיינים בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
+
+    # ===== כתיבה =====
+    st.divider()
+    out_tab = template_config.OUTPUT_TAB_CAMPAIGNS
+    manual_tab = template_config.OUTPUT_TAB_MANUAL_CAMPAIGNS
+    manual_count = max(len(manual_grid) - 1, 0)  # בלי שורת-הכותרת
+    st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
+    if manual_count:
+        st.info(
+            f"יש {manual_count} רשומות לטיפול ידני — הן נכתבות ללשונית **{manual_tab}** "
+            f"ולא נטענות. סמן שם בעמודת *בחר* את שורת ה**מאגר** הנכונה, ולחץ שוב על הכפתור "
+            "כדי לקלוט את הבחירות לפלט (Upsert)."
+        )
+
+    if st.button("בנה וכתוב גיליונות טעינה"):
+        try:
+            try:
+                manual_rows = sheets_io.read_values(template_link, manual_tab)
+            except Exception:  # noqa: BLE001 — הלשונית עדיין לא נוצרה
+                manual_rows = []
+            choices, warns = output_writer.parse_manual_choices(manual_rows)
+            for w in warns:
+                st.warning(w)
+
+            grid2, colors2 = output_writer.build_campaigns_grid(
+                dedup, record_values, cols, db_by_id, manual_choices=choices
+            )
+            manual2 = output_writer.build_manual_grid(
+                dedup, record_values, cols, db_by_id, source_rows,
+                object_api=template_config.CAMPAIGN_OBJECT, marked=choices,
+            )
+
+            sheets_io.ensure_tab(template_link, out_tab)
+            n = sheets_io.write_grid(template_link, out_tab, grid2)
+            sheets_io.set_tab_rtl(template_link, out_tab)
+            sheets_io.color_cells(template_link, out_tab, colors2)
+
+            remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
+            if remaining:
+                sheets_io.ensure_tab(template_link, manual_tab)
+                sheets_io.write_grid(template_link, manual_tab, manual2)
+                sheets_io.set_tab_rtl(template_link, manual_tab)
+
+            _read_cached.clear()  # רוקון מטמון אחרי כתיבה
+            msg = f"נכתבו {max(n - 2, 0)} שורות ללשונית {out_tab}."
+            if choices:
+                msg += f" נקלטו {len(choices)} בחירות ידניות."
+            if remaining:
+                msg += f" {remaining} רשומות ממתינות בלשונית {manual_tab}."
+            st.success(msg)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"כשל בכתיבה לטמפלייט: {e}")
+
+
+def screen_relationship() -> None:
+    """שלב 5 (קשרים) — גזירת קשרים חדשים מצמדי אנשי-קשר וכתיבתם לגיליון-טעינה.
+
+    כפתור יחיד: המשתמש לוחץ אחרי שטען את Contacts לסיילספורס והדביק חזרה את ה-Ids.
+    הצינור קורא את "פלט - Contacts" לבניית local_key→Id, גוזר קשרים מהטמפלייט,
+    מסנן זוגות קיימים-ב-DB, וכותב את החדשים ללשונית "פלט - Relationships".
+    """
+    st.header("שלב 5 — בניית קשרים לטעינה")
+    st.write(
+        "הכלי גוזר קשרים בין אנשי-קשר ראשי לנוסף מכל שורה, ומסנן זוגות שכבר קיימים "
+        "במאגר. **לחץ על הכפתור לאחר שטענת את Contacts לסיילספורס וה-Ids הודבקו חזרה "
+        "בלשונית 'פלט - Contacts'.** כיוון אחד בלבד — סיילספורס יוצר את ההפוך אוטומטית."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+    db_link = st.session_state.get("link_db", "")
+    mechanisms = st.session_state.get("mechanisms")
+
+    if not template_link or not soql_link or not db_link:
+        st.warning("חסר חיבור — חזור לשלב 0 וחבר את *עותק הטמפלייט*, *מיפוי אובייקטים ושדות* ו-*קובץ DB*.")
+        return
+    if not mechanisms:
+        st.warning("לא הוגדרו מנגנוני זיהוי — חזור למסך *מנגנוני זיהוי* ושמור לפחות מנגנון אחד.")
+        return
+
+    if st.button("בנה וכתוב גיליון קשרים"):
+        try:
+            # רוקנים מטמון כדי לקרוא Ids עדכניים מ-"פלט - Contacts" (המשתמש הדביק אותם)
+            _read_cached.clear()
+
+            cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
+            tmpl_rows = _read_cached(template_link, template_config.TEMPLATE_TAB)
+
+            # ריצת Contacts (אותה ריצה כמו screen_contacts) לבניית local_key → record_idx
+            contact_split = splitter.split_object(
+                "Contact", tmpl_rows, cols,
+                data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+            )
+            contact_records = [r.values for r in contact_split]
+            # db_records=[] — רק קיבוץ פנימי לצורך local_key; אין צורך ב-DB כאן
+            contact_dedup = dedup_engine.deduplicate(
+                contact_records, mechanisms, [],
+                digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
+                local_key_prefix="C",
+            )
+
+            # local_key → sf_id מלשונית פלט-Contacts (לאחר שהמשתמש הדביק את ה-Ids)
+            try:
+                contacts_out_rows = sheets_io.read_values(
+                    template_link, template_config.OUTPUT_TAB_CONTACTS
+                )
+            except Exception:  # noqa: BLE001 — הלשונית עדיין לא קיימת
+                contacts_out_rows = []
+            contact_id_map = relationship_builder.contact_id_map_from_grid(contacts_out_rows)
+
+            if not contact_id_map:
+                st.error(
+                    "לא נמצאו Ids ב-'פלט - Contacts' — "
+                    "יש לטעון את Contacts לסיילספורס ולהדביק את ה-Ids חזרה לפני הרצת שלב זה."
+                )
+                return
+
+            # DB Relationships — לסינון זוגות קיימים
+            db_rel_rows = _read_cached(
+                db_link, template_config.DB_TAB_NAMES[template_config.RELATIONSHIP_OBJECT]
+            )
+            db_rel_records = sheets_io.rows_to_dicts(db_rel_rows)
+            db_rel_pairs = relationship_builder.db_rel_pairs_from_records(db_rel_records)
+
+            rel_records = relationship_builder.derive_relationships(
+                tmpl_rows, cols, contact_split, contact_dedup,
+                contact_id_map, db_rel_pairs,
+                data_start_row=template_config.TEMPLATE_DATA_START_ROW,
+                block_primary=template_config.CONTACT_BLOCK_PRIMARY,
+                block_secondary=template_config.CONTACT_BLOCK_SECONDARY,
+                relationship_object=template_config.RELATIONSHIP_OBJECT,
+            )
+
+            grid, cell_colors = relationship_builder.build_relationship_grid(rel_records)
+
+            new_count = max(len(grid) - 2, 0)
+            skipped_db = sum(1 for r in rel_records if r.exists_in_db)
+            pending_id = sum(1 for r in rel_records if r.warning)
+
+            for r in rel_records:
+                if r.warning:
+                    st.warning(r.warning)
+
+            out_tab = template_config.OUTPUT_TAB_RELATIONSHIPS
+            sheets_io.ensure_tab(template_link, out_tab)
+            n = sheets_io.write_grid(template_link, out_tab, grid)
+            sheets_io.set_tab_rtl(template_link, out_tab)
+            sheets_io.color_cells(template_link, out_tab, cell_colors)
+            _read_cached.clear()
+
+            msg = f"נכתבו {new_count} קשרים חדשים ללשונית {out_tab}."
+            if skipped_db:
+                msg += f" {skipped_db} קשרים כבר קיימים במאגר — לא נכתבו."
+            if pending_id:
+                msg += f" {pending_id} שורות ממתינות ל-Id (Contacts שטרם נטענו)."
+            st.success(msg)
+
+        except Exception as e:  # noqa: BLE001
+            st.error(f"שגיאה בבניית גיליון הקשרים:\n\n{e}")
+
+
 SCREENS = {
     "שלב 0 — חיבור + שאילתה": screen_connection,
     "שלבים 2–3 — מיפוי": screen_mapping,
     "מנגנוני זיהוי": screen_identity,
     "שלב 4 — ייצוא DB": screen_db_export,
     "שלב 5 — בניית Contacts": screen_contacts,
+    "שלב 5 — בניית Campaigns": screen_campaigns,
+    "שלב 5 — בניית Relationships": screen_relationship,
 }
 
 choice = st.sidebar.radio("שלב", list(SCREENS.keys()))

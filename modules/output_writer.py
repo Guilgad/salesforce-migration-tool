@@ -160,6 +160,75 @@ def build_contacts_grid(
     return grid, cell_colors
 
 
+_CAMPAIGN_EXISTS_TEXT = "קיים"  # תווית ל"נמצא לפי" כשהקמפיין כבר קיים ב-DB (נמצא לפי שם)
+
+
+def _campaign_found_cell(person: dedup_engine.PersonResult) -> tuple[str, str | None]:
+    """
+    טקסט וצבע לתא "נמצא לפי" לקמפיינים. בניגוד ל-Contacts יש מנגנון יחיד (שם),
+    לכן אין משמעות ל-"1/2/3" — רק "קיים" (🟢) לעדכון, או ריק ל-Insert חדש.
+    (דו-משמעי/חסר-שם מוחרגים לטיפול ידני ולא מגיעים לכאן.)
+    """
+    if person.action == dedup_engine.ACTION_UPSERT and person.sf_id:
+        return _CAMPAIGN_EXISTS_TEXT, "green"
+    return "", None
+
+
+def build_campaigns_grid(
+    dedup_result: dedup_engine.DedupResult,
+    record_values: list[dict],
+    columns: list[mapper.TemplateColumn],
+    db_by_id: dict[str, dict],
+    *,
+    object_api: str = "Campaign",
+    manual_choices: dict[str, str] | None = None,
+) -> tuple[list[list[str]], list[tuple[int, int, str]]]:
+    """
+    מרכיב גריד פלט לקמפיינים. זהה במבנה ל-build_contacts_grid (2 שורות-כותרת,
+    קונסולידציה, backfill ל-Upsert, החרגת דו-משמעי/חסר-שם לטיפול ידני) — ההבדל
+    היחיד הוא תא "נמצא לפי": "קיים"/ריק לפי שם, במקום מספר-מנגנון.
+    פרמטרים ומבנה-החזרה כמו build_contacts_grid.
+    """
+    choices = manual_choices or {}
+    field_pairs = _field_columns(columns, object_api)
+    fields = [api for api, _label in field_pairs]
+
+    header_he = [he for he, _api in _DISPLAY_COLUMNS] + [_ID_COLUMN[0]] + [
+        label for _api, label in field_pairs
+    ]
+    header_api = [api for _he, api in _DISPLAY_COLUMNS] + [_ID_COLUMN[1]] + fields
+    grid: list[list[str]] = [header_he, header_api]
+    cell_colors: list[tuple[int, int, str]] = []
+
+    row_idx = 0
+    for person in dedup_result.persons:
+        chosen = choices.get(person.local_key)
+        if (person.ambiguous or person.unkeyed) and not chosen:
+            continue  # מוחרגים מהטעינה → לשונית "טיפול ידני" (אלא אם נבחרו ידנית)
+
+        sf_id = chosen if chosen else person.sf_id
+        merged = _consolidate(person.record_indices, record_values, fields)
+
+        if sf_id:
+            db_rec = db_by_id.get(sf_id, {})
+            for f in fields:
+                if not merged[f]:
+                    merged[f] = str(db_rec.get(f, "") or "").strip()
+
+        if chosen:
+            found_text, color = _RESOLVED_TEXT, "orange"
+        else:
+            found_text, color = _campaign_found_cell(person)
+        if color is not None:
+            cell_colors.append((_HEADER_ROWS + row_idx, _FOUND_BY_COL, color))
+
+        row = [person.local_key, found_text, sf_id or ""] + [merged[f] for f in fields]
+        grid.append(row)
+        row_idx += 1
+
+    return grid, cell_colors
+
+
 def build_manual_grid(
     dedup_result: dedup_engine.DedupResult,
     record_values: list[dict],
