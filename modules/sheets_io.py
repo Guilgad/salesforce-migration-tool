@@ -190,6 +190,7 @@ _CELL_COLORS = {
     "green":  {"red": 0.78, "green": 0.91, "blue": 0.79},
     "yellow": {"red": 1.00, "green": 0.95, "blue": 0.70},
     "red":    {"red": 0.96, "green": 0.78, "blue": 0.78},
+    "orange": {"red": 1.00, "green": 0.80, "blue": 0.40},  # הכרעה-בשילוב — בולט לעין
 }
 
 

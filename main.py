@@ -449,6 +449,7 @@ def screen_contacts() -> None:
             data_start_row=template_config.TEMPLATE_DATA_START_ROW,
         )
         record_values = [r.values for r in split_records]
+        source_rows = [r.source_row for r in split_records]
 
         db_rows = _read_cached(db_link, template_config.DB_TAB_NAMES["Contact"])
         db_records = sheets_io.rows_to_dicts(db_rows)
@@ -459,6 +460,9 @@ def screen_contacts() -> None:
             digits_only_fields=template_config.DIGITS_ONLY_FIELDS,
         )
         grid, cell_colors = output_writer.build_contacts_grid(dedup, record_values, cols, db_by_id)
+        manual_grid = output_writer.build_manual_grid(
+            dedup, record_values, cols, db_by_id, source_rows
+        )
     except Exception as e:  # noqa: BLE001 — כל כשל מדווח למשתמש, לא מפיל את המסך
         st.error(f"שגיאה בהרצת הצינור:\n\n{e}")
         return
@@ -489,15 +493,55 @@ def screen_contacts() -> None:
     # ===== כתיבה =====
     st.divider()
     out_tab = template_config.OUTPUT_TAB_CONTACTS
+    manual_tab = template_config.OUTPUT_TAB_MANUAL_CONTACTS
+    manual_count = max(len(manual_grid) - 1, 0)  # בלי שורת-הכותרת
     st.markdown(f"היעד: לשונית **{out_tab}** בתוך הטמפלייט (כתיבה חוזרת מחליפה את התוכן הקודם).")
-    if st.button(f"כתוב {max(len(grid) - 2, 0)} שורות ל-{out_tab}"):
+    if manual_count:
+        st.info(
+            f"יש {manual_count} רשומות לטיפול ידני — הן נכתבות ללשונית **{manual_tab}** "
+            f"ולא נטענות. סמן שם בעמודת *בחר* את שורת ה**מאגר** הנכונה, ולחץ שוב על הכפתור "
+            "כדי לקלוט את הבחירות לפלט (Upsert)."
+        )
+
+    if st.button("בנה וכתוב גיליונות טעינה"):
         try:
+            # קריאה טרייה (לא ממטמון) של לשונית הטיפול הידני — המשתמש עורך אותה ישירות
+            # בגיליון; קליטת ה✓ חייבת לשקף את מצבו הנוכחי. לשונית שלא קיימת עדיין → ריק.
+            try:
+                manual_rows = sheets_io.read_values(template_link, manual_tab)
+            except Exception:  # noqa: BLE001 — הלשונית עדיין לא נוצרה
+                manual_rows = []
+            choices, warns = output_writer.parse_manual_choices(manual_rows)
+            for w in warns:
+                st.warning(w)
+
+            # בנייה מחדש עם הבחירות (אידמפוטנטי): מי שנבחר נכנס לפלט כ-Upsert,
+            # והסימונים נשמרים בלשונית הידנית.
+            grid2, colors2 = output_writer.build_contacts_grid(
+                dedup, record_values, cols, db_by_id, manual_choices=choices
+            )
+            manual2 = output_writer.build_manual_grid(
+                dedup, record_values, cols, db_by_id, source_rows, marked=choices
+            )
+
             sheets_io.ensure_tab(template_link, out_tab)
-            n = sheets_io.write_grid(template_link, out_tab, grid)
+            n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
-            sheets_io.color_cells(template_link, out_tab, cell_colors)
-            _read_cached.clear()  # רוקון מטמון אחרי כתיבה — הקריאה הבאה תביא נתון עדכני
-            st.success(f"נכתבו {n} שורות (כולל 2 שורות כותרת) ללשונית {out_tab}.")
+            sheets_io.color_cells(template_link, out_tab, colors2)
+
+            remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
+            if remaining:
+                sheets_io.ensure_tab(template_link, manual_tab)
+                sheets_io.write_grid(template_link, manual_tab, manual2)
+                sheets_io.set_tab_rtl(template_link, manual_tab)
+
+            _read_cached.clear()  # רוקון מטמון אחרי כתיבה
+            msg = f"נכתבו {max(n - 2, 0)} שורות ללשונית {out_tab}."
+            if choices:
+                msg += f" נקלטו {len(choices)} בחירות ידניות."
+            if remaining:
+                msg += f" {remaining} רשומות ממתינות בלשונית {manual_tab}."
+            st.success(msg)
         except Exception as e:  # noqa: BLE001
             st.error(f"כשל בכתיבה לטמפלייט: {e}")
 

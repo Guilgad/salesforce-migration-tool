@@ -8,14 +8,15 @@
 שני שלבים, שניהם קוראים ל-identity.compute_key **מנגנון-בכל-פעם** (כפי שסוכם):
   1. קיבוץ פנימי (שרשור): רשומות שחולקות מפתח לא-ריק באותו מנגנון = אותו אדם
      (טרנזיטיבי). מי שלא נתפס באף מנגנון → אדם בודד, מסומן ל-טיפול ידני.
-  2. הצלבה מול DB (מפל מדורג): לכל אדם מנסים מנגנונים לפי עדיפות; הראשון שמביא
-     בדיוק התאמה אחת → Upsert (עם ה-Id). יותר מהתאמה אחת → ambiguous (לא בוחר עיוור).
+  2. הצלבה מול DB עם **צירוף-מנגנונים מדורג**: העוגן = המנגנון הראשון שתפס.
+     תפס בדיוק 1 → Upsert. תפס >1 → מצרפים את מנגנוני-ההמשך לצמצום (חיתוך); הצטמצם
+     ל-1 → Upsert בשילוב (לא בוחר עיוור). עדיין >1 → ambiguous (טיפול ידני).
      אף מנגנון לא תפס → Insert.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from modules import identity
 
@@ -33,8 +34,10 @@ class PersonResult:
     action: str                 # ACTION_INSERT | ACTION_UPSERT
     sf_id: str | None           # ה-Id מה-DB (Upsert); None ל-Insert
     found_by: int | None        # אינדקס המנגנון שתפס ב-DB (ל-__נמצא_לפי)
-    ambiguous: bool             # >1 התאמת-DB → דורש טיפול ידני, בלי Id עיוור
+    ambiguous: bool             # >1 התאמת-DB גם אחרי צירוף → טיפול ידני, בלי Id עיוור
     unkeyed: bool               # אף מנגנון לא תפס את הרשומות → סימון ידני
+    match_ids: list[str] = field(default_factory=list)      # מועמדי-DB כש-ambiguous (לטיפול ידני)
+    combined_mechs: list[int] = field(default_factory=list)  # מנגנונים שצורפו בהכרעה-בשילוב (לתווית/צבע)
 
 
 @dataclass
@@ -123,26 +126,51 @@ def _match_db(
     prepped: list[dict],
     mechanisms: list[list[str]],
     db_indices: list[dict[str, set[str]]],
-) -> tuple[str | None, int | None, bool]:
+) -> tuple[str | None, int | None, bool, list[str], list[int]]:
     """
-    מפל מדורג מול ה-DB עבור אדם אחד. מחזיר (sf_id, found_by, ambiguous).
-    לכל מנגנון לפי הסדר: אוסף את מפתחות חברי-הקבוצה ומאחד את ה-ids התואמים.
-      - בדיוק id אחד → (id, i, False)
-      - יותר מ-id אחד → (None, i, True)
-      - אפס → המנגנון הבא
-    בלי פגיעה בכל המנגנונים → (None, None, False).
+    התאמה מול ה-DB עבור אדם אחד, עם **צירוף-מנגנונים מדורג** לשבירת ריבוי.
+    מחזיר (sf_id, found_by, ambiguous, match_ids, combined_mechs).
+
+    1. אוספים לכל מנגנון את קבוצת ה-ids התואמים (רק מנגנונים עם ≥1 התאמה).
+    2. אין אף התאמה → Insert: (None, None, False, [], []).
+    3. ה**עוגן** = המנגנון הראשון שתפס. אם תפס בדיוק 1 → Upsert נקי
+       (id, anchor, False, [], []).
+    4. עוגן עם >1 → צירוף מדורג: מחתכים את המועמדים עם כל מנגנון-המשך שמצמצם אותם
+       *בפועל* (חיתוך לא-ריק וקטן יותר). הצטמצם ל-1 → Upsert בשילוב
+       (id, anchor, False, [], combined). מנגנון מתנגש (חיתוך ריק) מדולג כרעש.
+    5. נגמרו המנגנונים ועדיין >1 → ambiguous: (None, anchor, True, union_ids, []).
+       match_ids = איחוד כל המועמדים (לתצוגה בלשונית הידנית).
     """
+    matched_sets: list[tuple[int, set[str]]] = []
     for i, mech in enumerate(mechanisms):
         matched: set[str] = set()
         for mi in member_indices:
             key = _mechanism_key(prepped[mi], mech)
             if key is not None:
                 matched |= db_indices[i].get(key, set())
-        if len(matched) == 1:
-            return next(iter(matched)), i, False
-        if len(matched) > 1:
-            return None, i, True
-    return None, None, False
+        if matched:
+            matched_sets.append((i, matched))
+
+    if not matched_sets:
+        return None, None, False, [], []  # Insert — אף מנגנון לא תפס
+
+    anchor, anchor_set = matched_sets[0]
+    if len(anchor_set) == 1:
+        return next(iter(anchor_set)), anchor, False, [], []  # Upsert נקי
+
+    # עוגן דו-משמעי (>1) → צירוף מדורג עם מנגנוני-ההמשך
+    current = set(anchor_set)
+    combined = [anchor]
+    for i, mset in matched_sets[1:]:
+        narrowed = current & mset
+        if narrowed and len(narrowed) < len(current):  # מצמצם בפועל (לא רעש מתנגש)
+            current = narrowed
+            combined.append(i)
+            if len(current) == 1:
+                return next(iter(current)), anchor, False, [], combined
+
+    union_ids: set[str] = set().union(*(m for _, m in matched_sets))
+    return None, anchor, True, sorted(union_ids), []  # ambiguous → טיפול ידני
 
 
 def deduplicate(
@@ -176,7 +204,7 @@ def deduplicate(
             for mi in member_indices
             for mech in mechanisms
         )
-        sf_id, found_by, ambiguous = _match_db(
+        sf_id, found_by, ambiguous, match_ids, combined_mechs = _match_db(
             member_indices, prepped, mechanisms, db_indices
         )
         action = ACTION_UPSERT if sf_id is not None else ACTION_INSERT
@@ -190,12 +218,19 @@ def deduplicate(
                 found_by=found_by,
                 ambiguous=ambiguous,
                 unkeyed=unkeyed,
+                match_ids=match_ids,
+                combined_mechs=combined_mechs,
             )
         )
-        if ambiguous:
-            counts["ambiguous"] += 1
+        # ספירה הדדית-בלעדית כדי שהמונים יתאמו למה שבאמת ייטען:
+        # unkeyed/ambiguous עוברים לטיפול ידני (לא נספרים כ"חדשים").
         if unkeyed:
             counts["unkeyed"] += 1
-        counts["upserts" if action == ACTION_UPSERT else "inserts"] += 1
+        elif ambiguous:
+            counts["ambiguous"] += 1
+        elif action == ACTION_UPSERT:
+            counts["upserts"] += 1
+        else:
+            counts["inserts"] += 1
 
     return DedupResult(persons=persons, counts=counts)
