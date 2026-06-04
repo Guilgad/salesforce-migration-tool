@@ -320,6 +320,12 @@ def screen_mapping() -> None:
 
     base_objs = list(dictionary.keys())
     rows = [c for c in cols if c.status != mapper.STATUS_IGNORE]
+    ignored = [c for c in cols if c.status == mapper.STATUS_IGNORE]
+    if ignored:
+        with st.expander(f"⚪ עמודות מוסתרות ({len(ignored)}) — מפרידים/תיאורים ללא שדה"):
+            for c in ignored:
+                letter = sheets_io.col_letter(c.index)
+                st.markdown(f"- **{letter}** · {c.label or '*(ריק)*'}")
 
     # כותרות עמודות (סדר לוגי; תחת RTL מופיע מימין לשמאל)
     widths = [3, 3, 4, 1, 1]
