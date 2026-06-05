@@ -192,10 +192,15 @@ def _run_mapping_pipeline(template_link: str, soql_link: str):
     return cols, parsed.warnings, parsed.objects
 
 
-def _validation_summary(grid, object_api: str, dictionary: dict) -> list:
+def _validation_summary(
+    grid, object_api: str, dictionary: dict, *, written: bool = False, tab: str | None = None
+) -> list:
     """
     בדיקת-נתונים על גריד-פלט (תאריכים/אורך-Id) + סיכום קצר במסך.
     מחזיר marks: [(row0, col0, message)] לסימון על גיליון-הטעינה.
+
+    written: False = תצוגה-מקדימה (עוד לא נכתב/נצבע) → ההודעה מנחה ללחוץ "בנה וכתוב".
+             True  = אחרי-כתיבה → ההודעה מציינת שהתאים *כבר* סומנו אדום בלשונית tab.
     """
     issues, marks = validator.validate_output_grid(grid, object_api, dictionary)
     if not issues:
@@ -208,10 +213,13 @@ def _validation_summary(grid, object_api: str, dictionary: dict) -> list:
         parts.append(f"{bad_dates} תאריכים")
     if bad_ids:
         parts.append(f"{bad_ids} מזהי-Id")
-    st.warning(
-        f"בדיקת נתונים: ⚠️ {len(issues)} בעיות ({' · '.join(parts)}). "
-        "התאים מסומנים אדום בגיליון-הטעינה, עם הסבר בריחוף."
-    )
+    example = issues[0].location  # דוגמת-מיקום (למשל "J16") כדי שהמשתמש ידע איפה לחפש
+    head = f"בדיקת נתונים: ⚠️ {len(issues)} בעיות ({' · '.join(parts)})."
+    if written:
+        where = f"בלשונית **{tab}**" if tab else "בגיליון-הטעינה"
+        st.warning(f"{head} התאים סומנו אדום {where} (למשל {example}), עם הסבר בריחוף.")
+    else:
+        st.warning(f"{head} לחץ **בנה וכתוב** כדי לסמן אותן אדום בלשונית הפלט (למשל {example}).")
     with st.expander("פירוט הבעיות"):
         for i in issues:
             st.markdown(f"- **{i.location}** · {i.label}: {i.message}")
@@ -653,7 +661,7 @@ def screen_contacts() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid2, "Contact", dictionary)
+            marks = _validation_summary(grid2, "Contact", dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
@@ -788,7 +796,7 @@ def screen_campaigns() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid2, template_config.CAMPAIGN_OBJECT, dictionary)
+            marks = _validation_summary(grid2, template_config.CAMPAIGN_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
@@ -918,7 +926,7 @@ def screen_relationship() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid, template_config.RELATIONSHIP_OBJECT, dictionary)
+            marks = _validation_summary(grid, template_config.RELATIONSHIP_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
             _read_cached.clear()
 
@@ -1038,7 +1046,7 @@ def screen_campaign_members() -> None:
             sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid, template_config.CM_OBJECT, dictionary)
+            marks = _validation_summary(grid, template_config.CM_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
             _read_cached.clear()
 
