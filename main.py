@@ -416,14 +416,25 @@ def screen_identity() -> None:
     default_api = template_config.DEFAULT_IDENTITY_FIELD
     default_disp = pool.get(default_api)  # למנגנון 1 בלבד, אם קיים במאגר
 
+    # זריעה חד-פעמית של מצב הווידג'טים מהקונפיג השמור — רק כשהמפתח לא קיים
+    # (Streamlit זורק מצב-widget של מסך שלא הוצג; כך החזרה למסך לא מאפסת את הבחירה).
+    saved = st.session_state.get("mechanisms", [])  # list[list[str]] של שמות-API
+    for n in range(1, _N_MECHANISMS + 1):
+        if f"mech_active_{n}" not in st.session_state:
+            mech = saved[n - 1] if (n - 1) < len(saved) else None
+            if mech is not None:
+                st.session_state[f"mech_active_{n}"] = True
+                st.session_state[f"mech_fields_{n}"] = [pool[a] for a in mech if a in pool]
+            else:
+                st.session_state[f"mech_active_{n}"] = (n == 1)
+                st.session_state[f"mech_fields_{n}"] = [default_disp] if (n == 1 and default_disp) else []
+
     mechanisms: list[list[str]] = []
     for n in range(1, _N_MECHANISMS + 1):
-        active = st.checkbox(f"מנגנון {n} — פעיל", value=(n == 1), key=f"mech_active_{n}")
-        default = [default_disp] if (n == 1 and default_disp) else []
+        active = st.checkbox(f"מנגנון {n} — פעיל", key=f"mech_active_{n}")
         chosen = st.multiselect(
             f"שדות מנגנון {n} (צירוף AND)",
             options,
-            default=default,
             key=f"mech_fields_{n}",
             disabled=not active,
         )
@@ -886,6 +897,17 @@ def screen_relationship() -> None:
             new_count = max(len(grid) - 2, 0)
             skipped_db = sum(1 for r in rel_records if r.exists_in_db)
             pending_id = sum(1 for r in rel_records if r.warning)
+
+            # אינדיקציית בדיקת-כפילויות — בראש התוצאות כדי שלא תתפספס.
+            # שני המספרים (רשומות → זוגות) מוכיחים שהכיוון ההפוך אוחד: NPSP שומר כל
+            # קשר בשני כיוונים, כך ש-unique_pairs ≈ מחצית db_records_count.
+            db_records_count = len(db_rel_records)   # רשומות-קשר שנקראו מה-DB
+            unique_pairs = len(db_rel_pairs)         # זוגות ייחודיים אחרי איחוד דו-כיווני
+            st.info(
+                f"🔎 **בדיקת כפילויות (דו-כיוונית):** נקראו {db_records_count} קשרים מהמאגר "
+                f"→ {unique_pairs} זוגות ייחודיים (A↔B נחשבים אותו קשר). "
+                f"{skipped_db} מהקשרים שנגזרו כבר קיימים במאגר — דולגו."
+            )
 
             for r in rel_records:
                 if r.warning:
