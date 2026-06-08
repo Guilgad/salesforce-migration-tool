@@ -12,7 +12,12 @@ from modules import (
     validator, notes_store,
 )
 
-st.set_page_config(page_title="כלי מיגרציה לסיילספורס", layout="wide")
+# initial_sidebar_state="expanded": כיוון שהסתרנו את כפתור-הכיווץ, חובה שהסרגל-צד
+# ייפתח תמיד — אחרת (ב-Streamlit 1.58 סרגל מכווץ מוסר מה-DOM) המשתמש ננעל בחוץ.
+st.set_page_config(
+    page_title="כלי מיגרציה לסיילספורס", layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # כיוון RTL בסיסי לעברית (כולל כותרות) — אך קוד (SQL) תמיד LTR כדי שלא יוצג הפוך
 st.markdown(
@@ -20,13 +25,16 @@ st.markdown(
     ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton,"
     ' [data-testid="stHeading"], h1, h2, h3, h4 {direction: rtl; text-align: right;}'
     '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
-    # פאנל-צד צר: הניווט עבר לסרגל העליון; נשארו רק רענון + פתק-הערות
+    # פאנל-צד צר: הניווט עבר לסרגל העליון; נשארו רק כותרת + רענון + פתק-הערות
     ' [data-testid="stSidebar"] {min-width: 280px; max-width: 320px;}'
+    # הסתרת chrome נייטיב חסר-תועלת לכלי מקומי: כפתור Deploy + חיצי כיווץ הסרגל-צד
+    ' [data-testid="stAppDeployButton"] {display: none;}'
+    ' [data-testid="stSidebarCollapseButton"] {display: none;}'
+    # צמצום בזבוז-הגובה: התוכן מתחיל גבוה יותר (ברירת-המחדל ~6rem)
+    " .block-container {padding-top: 2.5rem;}"
     "</style>",
     unsafe_allow_html=True,
 )
-
-st.title("כלי מיגרציה לסיילספורס")
 
 # שלושת הגיליונות והרמה הנדרשת לכל אחד
 SHEETS = [
@@ -57,9 +65,11 @@ def _read_cached(link: str, tab: str | None) -> list[list[str]]:
 # st.session_state["status"][step_index][sub] = טקסט-badge קצר.
 # כל מסך כותב את הסטטוס שלו בסוף הצינור (lazy) — הסרגל בלבד קורא משם; אין צימוד בין המסכים.
 
-def _set_status(step: int, text: str, sub: str = "") -> None:
-    """שומר badge-טקסט לשלב. `sub` מבדיל בין תת-מסכי שלבים 4/5 (אנשי-קשר/קמפיינים וכו')."""
+def _set_status(step: int, text: str, sub: str = "", ok: bool = True) -> None:
+    """שומר badge-טקסט לשלב + דגל-תקינות. `sub` מבדיל בין תת-מסכי שלבים 4/5.
+    ok=False מסמן שהשלב נוגעו-בו אך לא-הושלם/התנתק → ייצבע אפור בסרגל."""
     st.session_state.setdefault("status", {}).setdefault(step, {})[sub] = text
+    st.session_state.setdefault("status_ok", {}).setdefault(step, {})[sub] = ok
 
 
 def _status_badge(step: int) -> str:
@@ -73,26 +83,52 @@ def _truncate(s: str, n: int = 12) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+# צבעי מצב-השלב לכרטיסי הסרגל העליון (אפשרות B).
+_STEP_COLORS = {
+    "done":       {"bg": "#e8f5e9", "border": "#81c784"},   # ירוק — הושלם/מחובר
+    "incomplete": {"bg": "#f0f0f0", "border": "#bbbbbb"},   # אפור — לא-הושלם/התנתק
+    "unvisited":  {"bg": "#ffffff", "border": "#e0e0e0"},   # לבן — טרם ביקרנו
+}
+_ACTIVE_BORDER = "#1565c0"  # מסגרת כחולה — השלב הנוכחי
+
+
+def _step_state(i: int) -> str:
+    """מצב-שלב לצביעה: unvisited (אין סטטוס) / done (הכל תקין) / incomplete (יש בעיה)."""
+    entries = st.session_state.get("status", {}).get(i)
+    if not entries:
+        return "unvisited"
+    oks = st.session_state.get("status_ok", {}).get(i, {})
+    return "done" if all(oks.get(sub, True) for sub in entries) else "incomplete"
+
+
 def _topbar() -> None:
-    """סרגל-שלבים עליון: ניווט בלחיצה + badge-סטטוס לכל שלב (RTL טבעי)."""
-    cols = st.columns(len(STEPS))
+    """סרגל-שלבים עליון (אפשרות B): כרטיס-כפתור צבעוני לכל שלב — מספר+שם בשורה ראשונה,
+    badge-סטטוס בשורה שנייה, מסגרת כחולה לשלב הפעיל. הצביעה דינמית דרך .st-key-nav_{i}."""
     active = st.session_state.get("step", 0)
-    status = st.session_state.get("status", {})
+
+    # CSS דינמי פר-כרטיס: רקע לפי-מצב + מסגרת כחולה לפעיל + עיצוב שתי שורות-הלייבל
+    rules = []
+    for i in range(len(STEPS)):
+        c = _STEP_COLORS[_step_state(i)]
+        border = f"3px solid {_ACTIVE_BORDER}" if i == active else f"2px solid {c['border']}"
+        sel = f".st-key-nav_{i} button"
+        rules.append(
+            f"{sel}{{background:{c['bg']} !important;border:{border} !important;"
+            "min-height:76px;border-radius:8px;align-items:flex-start;}"
+            f"{sel} p:first-child{{font-size:0.9rem;font-weight:700;color:#222;}}"
+            f"{sel} p:last-child{{font-size:0.74rem;font-weight:400;color:#555;margin-top:4px;}}"
+        )
+    st.markdown("<style>" + "".join(rules) + "</style>", unsafe_allow_html=True)
+
+    cols = st.columns(len(STEPS))
     for i, (col, step) in enumerate(zip(cols, STEPS)):
         with col:
-            done = bool(status.get(i))
-            prefix = "✓ " if done else f"{i + 1} · "
-            if st.button(prefix + step["label"], key=f"nav_{i}",
-                         use_container_width=True,
-                         type="primary" if i == active else "secondary"):
+            badge = _status_badge(i) or "—"
+            # שתי פסקאות (שורה ריקה ביניהן) → שני <p> שה-CSS לעיל מעצב בנפרד
+            label = f"{i + 1}. {step['label']}\n\n{badge}"
+            if st.button(label, key=f"nav_{i}", use_container_width=True):
                 st.session_state["step"] = i
                 st.rerun()
-            badge = _status_badge(i)
-            st.markdown(
-                f"<div style='text-align:center;font-size:0.8rem;color:#555;"
-                f"min-height:1.2em'>{badge or '—'}</div>",
-                unsafe_allow_html=True,
-            )
     st.divider()
 
 
@@ -103,6 +139,9 @@ def _sidebar_controls() -> None:
     - 'רענן ואפס מנגנונים ומיפוי' — מרוקן מטמון *וגם* מאפס מנגנוני-זיהוי ובחירות-מיפוי;
                                     משאיר חיבורים והערות.
     """
+    # כותרת הכלי — בראש הסרגל-צד (הוסרה מאזור-התוכן הראשי כדי לא לבזבז גובה)
+    st.sidebar.markdown("### כלי מיגרציה לסיילספורס")
+
     c1, c2 = st.sidebar.columns(2)
     if c1.button("רענן את 3 הגיליונות", use_container_width=True,
                  help="קורא מחדש נתונים עדכניים משלושת הגיליונות (טמפלייט, DB, מיפוי). "
@@ -135,7 +174,7 @@ def _sidebar_controls() -> None:
 
 def screen_connection() -> None:
     """שלב 0 — חיבור שלושת הגיליונות."""
-    st.header("חיבור גיליונות")
+    st.subheader("חיבור גיליונות")
 
     # ===== חיבור שלושת הגיליונות =====
     try:
@@ -161,7 +200,7 @@ def screen_connection() -> None:
     # סטטוס לסרגל: כמה מ-3 הגיליונות מחוברים (קישור נבחר)
     n_linked = sum(1 for k, _, _ in SHEETS if st.session_state.get(f"link_{k}"))
     if n_linked:
-        _set_status(0, f"{n_linked}/3 מחוברים")
+        _set_status(0, f"{n_linked}/3 מחוברים", ok=(n_linked == 3))
 
     if st.button("בדוק חיבור"):
         st.divider()
@@ -227,10 +266,11 @@ def _run_mapping_pipeline(template_link: str, soql_link: str):
 
 def _validation_summary(
     grid, object_api: str, dictionary: dict, *, written: bool = False, tab: str | None = None
-) -> list:
+) -> tuple[list, int]:
     """
     בדיקת-נתונים על גריד-פלט (תאריכים/אורך-Id) + סיכום קצר במסך.
-    מחזיר marks: [(row0, col0, message)] לסימון על גיליון-הטעינה.
+    מחזיר (marks, n_issues): marks = [(row0, col0, message)] לסימון על גיליון-הטעינה;
+    n_issues = מספר הבעיות (לשיקוף ב-badge של הסרגל).
 
     written: False = תצוגה-מקדימה (עוד לא נכתב/נצבע) → ההודעה מנחה ללחוץ "בנה וכתוב".
              True  = אחרי-כתיבה → ההודעה מציינת שהתאים *כבר* סומנו אדום בלשונית tab.
@@ -238,7 +278,7 @@ def _validation_summary(
     issues, marks = validator.validate_output_grid(grid, object_api, dictionary)
     if not issues:
         st.success("בדיקת נתונים: לא נמצאו בעיות ✅ (נבדקו: תאריכים ומזהי Id)")
-        return marks
+        return marks, 0
     bad_dates = sum(1 for i in issues if i.kind == validator.KIND_BAD_DATE)
     bad_ids = sum(1 for i in issues if i.kind == validator.KIND_BAD_ID)
     parts = []
@@ -256,7 +296,12 @@ def _validation_summary(
     with st.expander("פירוט הבעיות"):
         for i in issues:
             st.markdown(f"- **{i.location}** · {i.label}: {i.message}")
-    return marks
+    return marks, len(issues)
+
+
+def _val_badge(n_issues: int) -> str:
+    """חיווי-validation קצר ל-badge: תקין או מספר הבעיות."""
+    return "✅ נבדק" if n_issues == 0 else f"⚠️ {n_issues} בעיות"
 
 
 def _recheck_button(key: str) -> None:
@@ -341,7 +386,7 @@ def _api_selectbox(c: mapper.TemplateColumn, obj: str, dictionary: dict) -> str:
 
 def screen_mapping() -> None:
     """שלבים 2–3 — מיפוי וולידציה עם עריכה inline."""
-    st.header("2 · מיפוי")
+    st.subheader("מיפוי")
 
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
@@ -442,11 +487,11 @@ _N_MECHANISMS = 5
 
 
 def screen_identity() -> None:
-    """מסך הרכבת מנגנוני-זיהוי (3 מנגנונים מדורגים) — המשתמש בוחר, הכלי מרכיב."""
-    st.header("3 · מנגנוני זיהוי")
-    st.write(
-        "הרכב עד שלושה מנגנונים לזיהוי איש-קשר, לפי עדיפות (1→3). כל מנגנון = צירוף "
-        "שדות שצריכים *כולם* להתאים. הראשון שמוצא התאמה מנצח."
+    """מסך הרכבת מנגנוני-זיהוי (עד 5 מנגנונים מדורגים) — המשתמש בוחר, הכלי מרכיב."""
+    st.subheader("מנגנוני זיהוי")
+    st.caption(
+        "עד 5 מנגנונים לפי עדיפות (1→5). כל מנגנון = צירוף שדות שצריכים *כולם* להתאים; "
+        "הראשון שמוצא התאמה מנצח."
     )
 
     template_link = st.session_state.get("link_template", "")
@@ -491,8 +536,8 @@ def screen_identity() -> None:
                 st.session_state[f"mech_active_{n}"] = (n == 1)
                 st.session_state[f"mech_fields_{n}"] = [default_disp] if (n == 1 and default_disp) else []
 
-    mechanisms: list[list[str]] = []
-    for n in range(1, _N_MECHANISMS + 1):
+    # פריסה ב-2 עמודות (1|2, 3|4, 5 לבדו) — חוסך גלילה; רוחב-המסך מנוצל
+    def _mech_widget(n: int) -> list[str] | None:
         active = st.checkbox(f"מנגנון {n} — פעיל", key=f"mech_active_{n}")
         chosen = st.multiselect(
             f"שדות מנגנון {n} (צירוף AND)",
@@ -500,8 +545,17 @@ def screen_identity() -> None:
             key=f"mech_fields_{n}",
             disabled=not active,
         )
-        if active and chosen:
-            mechanisms.append([disp2api[d] for d in chosen])
+        return [disp2api[d] for d in chosen] if (active and chosen) else None
+
+    mechanisms: list[list[str]] = []
+    for start in range(1, _N_MECHANISMS + 1, 2):
+        pair = [start, start + 1] if start + 1 <= _N_MECHANISMS else [start]
+        cols_pair = st.columns(2)
+        for col, n in zip(cols_pair, pair):
+            with col:
+                mech = _mech_widget(n)
+                if mech:
+                    mechanisms.append(mech)
 
     # תצוגה-מקדימה חיה של הרשימה שתורכב (לפי תוויות, קריא יותר)
     st.divider()
@@ -515,20 +569,34 @@ def screen_identity() -> None:
     else:
         st.warning("אין מנגנון פעיל עם שדות — בחר לפחות מנגנון אחד.")
 
+    # בונה badge לסרגל: ✓ + כל שדות-המנגנון (מקוצרים), לכל מנגנון שמור.
+    full = {api: lbl.split(" — ", 1)[-1] for api, lbl in pool.items()}
+    def _identity_badge(mechs: list[list[str]]) -> str:
+        return " · ".join(
+            "✓" + "+".join(_truncate(full.get(a, a), 8) for a in m)
+            for m in mechs if m
+        )
+
     if st.button("שמור מנגנונים"):
         st.session_state["mechanisms"] = mechanisms
-        if mechanisms:
-            st.success(f"נשמרו {len(mechanisms)} מנגנונים.")
+        st.session_state["_mech_saved_n"] = len(mechanisms)
+        # קביעת הסטטוס *לפני* ה-rerun — הסרגל-העליון רץ בראש הסקריפט, ולכן חייב
+        # לקרוא ערך מעודכן כבר בריצה הבאה (אחרת ה-badge מתעדכן רק בלחיצה שאחרי).
+        _set_status(2, _identity_badge(mechanisms))
+        st.rerun()
+
+    # חיווי-שמירה אחרי ה-rerun (הדגל נצרך פעם אחת)
+    if "_mech_saved_n" in st.session_state:
+        _n = st.session_state.pop("_mech_saved_n")
+        if _n:
+            st.success(f"נשמרו {_n} מנגנונים.")
         else:
             st.info("נשמרה רשימה ריקה (אין מנגנון פעיל).")
 
-    # סטטוס לסרגל: ✓ + שם-השדה הראשון (מקוצר) לכל מנגנון שמור
+    # רענון הסטטוס בכל ביקור (משקף את המנגנונים השמורים גם בלי שמירה מחדש)
     saved_mechs = st.session_state.get("mechanisms") or []
     if saved_mechs:
-        full = {api: lbl.split(" — ", 1)[-1] for api, lbl in pool.items()}
-        _set_status(2, " · ".join(
-            "✓" + _truncate(full.get(m[0], m[0])) for m in saved_mechs if m
-        ))
+        _set_status(2, _identity_badge(saved_mechs))
 
 
 def _db_queries(template_link: str, soql_link: str) -> dict[str, list[str]]:
@@ -645,11 +713,10 @@ def screen_db_validation() -> None:
 
 def screen_contacts() -> None:
     """שלב 5 — בניית גריד Contacts מוכן-לטעינה וכתיבתו ללשונית-פלט בטמפלייט."""
-    st.header("בניית אנשי קשר לטעינה")
-    st.write(
-        "הכלי קורא את אנשי הקשר מהטמפלייט, מאחד כפילויות, ומשווה למאגר כדי לדעת מי "
-        "כבר קיים (לעדכון) ומי חדש. רשומות לעדכון מקבלות גם השלמת פרטים חסרים מהמאגר. "
-        "התוצאה נכתבת ללשונית מוכנה-לטעינה בתוך הטמפלייט."
+    st.subheader("בניית אנשי קשר לטעינה")
+    st.caption(
+        "איחוד כפילויות + השוואה למאגר (חדש/לעדכון, עם השלמת פרטים חסרים). "
+        "התוצאה נכתבת ללשונית מוכנה-לטעינה בטמפלייט."
     )
 
     template_link = st.session_state.get("link_template", "")
@@ -702,8 +769,8 @@ def screen_contacts() -> None:
         f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} אנשים ייחודיים · "
         f"{len(db_records)} רשומות במאגר"
     )
-    _set_status(3, f"א.קשר: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים",
-                sub="contacts")
+    _contacts_base = f"א.קשר: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים"
+    _set_status(3, _contacts_base, sub="contacts")
 
     # ===== תצוגה מקדימה =====
     # שתי שורות-כותרת (עברית מעל API); כותרת התצוגה = העברית, נתונים משורה 2 ואילך.
@@ -717,7 +784,8 @@ def screen_contacts() -> None:
         st.info("אין אנשי קשר בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
 
     # ===== בדיקת נתונים (אוטומטית) =====
-    _validation_summary(grid, "Contact", dictionary)
+    _, _nval = _validation_summary(grid, "Contact", dictionary)
+    _set_status(3, f"{_contacts_base} · {_val_badge(_nval)}", sub="contacts")
     _recheck_button("recheck_contacts")
 
     # ===== כתיבה =====
@@ -759,7 +827,7 @@ def screen_contacts() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid2, "Contact", dictionary, written=True, tab=out_tab)
+            marks, _ = _validation_summary(grid2, "Contact", dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
@@ -790,11 +858,10 @@ def screen_campaigns() -> None:
     מקביל ל-screen_contacts, אך הזיהוי הוא לפי **שם** בלבד (CAMPAIGN_MECHANISMS) —
     לא מנגנוני-הזיהוי של Contacts. כל שורות-ההרשמה לאותו אירוע מתקבצות לקמפיין אחד.
     """
-    st.header("בניית קמפיינים לטעינה")
-    st.write(
-        "הכלי קורא את האירועים מהטמפלייט, מאחד שורות עם אותו שם-אירוע לקמפיין אחד, "
-        "ומשווה למאגר כדי לדעת אילו קמפיינים כבר קיימים (לעדכון) ואילו חדשים. "
-        "התוצאה נכתבת ללשונית מוכנה-לטעינה בתוך הטמפלייט."
+    st.subheader("בניית קמפיינים לטעינה")
+    st.caption(
+        "איחוד שורות עם אותו שם-אירוע לקמפיין אחד + השוואה למאגר (חדש/לעדכון). "
+        "התוצאה נכתבת ללשונית מוכנה-לטעינה בטמפלייט."
     )
 
     template_link = st.session_state.get("link_template", "")
@@ -844,8 +911,8 @@ def screen_campaigns() -> None:
         f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} קמפיינים ייחודיים · "
         f"{len(db_records)} רשומות במאגר"
     )
-    _set_status(3, f"קמפיינים: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים",
-                sub="campaigns")
+    _campaigns_base = f"קמפיינים: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים"
+    _set_status(3, _campaigns_base, sub="campaigns")
 
     # ===== תצוגה מקדימה =====
     if len(grid) > 2:
@@ -858,7 +925,8 @@ def screen_campaigns() -> None:
         st.info("אין קמפיינים בטמפלייט עדיין — תיכתבו שורות הכותרות בלבד.")
 
     # ===== בדיקת נתונים (אוטומטית) =====
-    _validation_summary(grid, template_config.CAMPAIGN_OBJECT, dictionary)
+    _, _nval = _validation_summary(grid, template_config.CAMPAIGN_OBJECT, dictionary)
+    _set_status(3, f"{_campaigns_base} · {_val_badge(_nval)}", sub="campaigns")
     _recheck_button("recheck_campaigns")
 
     # ===== כתיבה =====
@@ -896,7 +964,7 @@ def screen_campaigns() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid2)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid2, template_config.CAMPAIGN_OBJECT, dictionary, written=True, tab=out_tab)
+            marks, _ = _validation_summary(grid2, template_config.CAMPAIGN_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid2, colors2, marks)
 
             remaining = max(len(manual2) - 1, 0)  # שורות שעדיין דורשות טיפול ידני
@@ -928,12 +996,12 @@ def screen_relationship() -> None:
     הצינור קורא את "פלט - Contacts" לבניית local_key→Id, גוזר קשרים מהטמפלייט,
     מסנן זוגות קיימים-ב-DB, וכותב את החדשים ללשונית "פלט - Relationships".
     """
-    st.header("בניית קשרים לטעינה")
-    st.write(
-        "הכלי גוזר קשרים בין אנשי-קשר ראשי לנוסף מכל שורה, ומסנן זוגות שכבר קיימים "
-        "במאגר. **לחץ על הכפתור לאחר שטענת את Contacts לסיילספורס וה-Ids הודבקו חזרה "
-        "בלשונית 'פלט - Contacts'.** כיוון אחד בלבד — סיילספורס יוצר את ההפוך אוטומטית."
+    st.subheader("בניית קשרים לטעינה")
+    st.caption(
+        "גזירת קשר בין ראשי לנוסף בכל שורה + סינון זוגות קיימים. כיוון אחד בלבד — "
+        "סיילספורס יוצר את ההפוך אוטומטית."
     )
+    st.info("הרץ **אחרי** שטענת Contacts לסיילספורס וה-Ids הודבקו חזרה ל'פלט - Contacts'.")
 
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
@@ -1005,7 +1073,8 @@ def screen_relationship() -> None:
             new_count = max(len(grid) - 2, 0)
             skipped_db = sum(1 for r in rel_records if r.exists_in_db)
             pending_id = sum(1 for r in rel_records if r.warning)
-            _set_status(4, f"קשרים: {new_count} חדשים · {skipped_db} קיימים", sub="rel")
+            _rel_base = f"קשרים: {new_count} חדשים · {skipped_db} קיימים"
+            _set_status(4, _rel_base, sub="rel")
 
             # אינדיקציית בדיקת-כפילויות — בראש התוצאות כדי שלא תתפספס.
             # שני המספרים (רשומות → זוגות) מוכיחים שהכיוון ההפוך אוחד: NPSP שומר כל
@@ -1027,8 +1096,9 @@ def screen_relationship() -> None:
             n = sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid, template_config.RELATIONSHIP_OBJECT, dictionary, written=True, tab=out_tab)
+            marks, _nval = _validation_summary(grid, template_config.RELATIONSHIP_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
+            _set_status(4, f"{_rel_base} · {_val_badge(_nval)}", sub="rel")
             _read_cached.clear()
 
             msg = f"נכתבו {new_count} קשרים חדשים ללשונית {out_tab}."
@@ -1049,12 +1119,9 @@ def screen_campaign_members() -> None:
     לכל שורה עם "משתתף באירוע"=TRUE (לראשי / לנוסף) נוצרת רשומת CampaignMember.
     v1: טוען את כולם ללא בדיקת-קיום מול DB.
     """
-    st.header("בניית CampaignMember")
-    st.write(
-        "הכלי יוצר רשומת השתתפות לכל אדם שסומן כ-'משתתף באירוע', ומקשר אותו "
-        "לקמפיין המתאים. **לחץ על הכפתור לאחר שטענת Contacts ו-Campaigns לסיילספורס "
-        "וה-Ids הודבקו חזרה בלשוניות הפלט שלהם.**"
-    )
+    st.subheader("בניית CampaignMember")
+    st.caption("רשומת השתתפות לכל אדם שסומן 'משתתף באירוע', מקושרת לקמפיין המתאים.")
+    st.info("הרץ **אחרי** שטענת Contacts ו-Campaigns וה-Ids הודבקו חזרה בלשוניות הפלט.")
 
     template_link = st.session_state.get("link_template", "")
     soql_link = st.session_state.get("link_soql", "")
@@ -1137,7 +1204,8 @@ def screen_campaign_members() -> None:
 
             written = max(len(grid) - 2, 0)
             pending = sum(1 for r in cm_records if r.warning)
-            _set_status(4, f"CM: {written} נוצרו", sub="cm")
+            _cm_base = f"CM: {written} נוצרו"
+            _set_status(4, _cm_base, sub="cm")
 
             for r in cm_records:
                 if r.warning:
@@ -1148,8 +1216,9 @@ def screen_campaign_members() -> None:
             sheets_io.write_grid(template_link, out_tab, grid)
             sheets_io.set_tab_rtl(template_link, out_tab)
             # צביעת-בונה + סימוני-ולידציה (אדום + הערת-תא) על גיליון-הטעינה
-            marks = _validation_summary(grid, template_config.CM_OBJECT, dictionary, written=True, tab=out_tab)
+            marks, _nval = _validation_summary(grid, template_config.CM_OBJECT, dictionary, written=True, tab=out_tab)
             _apply_validation_marks(template_link, out_tab, grid, cell_colors, marks)
+            _set_status(4, f"{_cm_base} · {_val_badge(_nval)}", sub="cm")
             _read_cached.clear()
 
             msg = f"נכתבו {written} רשומות CampaignMember ללשונית {out_tab}."
@@ -1171,14 +1240,17 @@ def screen_step1() -> None:
 
 
 # מבנה 5 השלבים. שלבים 4–5 מקבצים שני בונים כל אחד (תת-ניווט פנימי).
+# כל תת-מסך = (תווית, פונקציה, מפתח-סטטוס) — מפתח-הסטטוס מקשר ל-badge הפר-גיליון.
 STEPS = [
     {"label": "חיבור + שאילתות", "screen": screen_step1},
     {"label": "מיפוי", "screen": screen_mapping},
     {"label": "מנגנוני זיהוי", "screen": screen_identity},
     {"label": "גיליונות ראשיים",
-     "subs": [("אנשי קשר", screen_contacts), ("קמפיינים", screen_campaigns)]},
+     "subs": [("אנשי קשר", screen_contacts, "contacts"),
+              ("קמפיינים", screen_campaigns, "campaigns")]},
     {"label": "גיליונות מותנים",
-     "subs": [("קשרים", screen_relationship), ("CampaignMember", screen_campaign_members)]},
+     "subs": [("קשרים", screen_relationship, "rel"),
+              ("CampaignMember", screen_campaign_members, "cm")]},
 ]
 
 if "step" not in st.session_state:
@@ -1192,7 +1264,26 @@ _step = STEPS[_active]
 if "screen" in _step:
     _step["screen"]()
 else:
-    # תת-ניווט אופקי בשלבים 4/5 — רץ רק הבונה שנבחר (לא st.tabs, שמריץ את שניהם)
-    _subs = dict(_step["subs"])
-    _chosen = st.radio("בחר גיליון", list(_subs), key=f"sub_{_active}", horizontal=True)
-    _subs[_chosen]()
+    # תת-ניווט אנכי בשלבים 4/5 — שורה לכל גיליון, כפתורים גדולים עם badge פר-גיליון
+    # (כולל חיווי בדיקת תאריך/Id). רץ רק הבונה שנבחר — לא st.tabs, שמריץ את שניהם.
+    _subs = _step["subs"]
+    _sel_key = f"subsel_{_active}"
+    st.session_state.setdefault(_sel_key, 0)
+    # CSS: הגדלת כפתורי תת-הניווט + badge קטן בשורה שנייה
+    st.markdown(
+        '<style>[class*="st-key-subnav_"] button{min-height:58px;border-radius:8px;'
+        "align-items:flex-start;}"
+        '[class*="st-key-subnav_"] button p:first-child{font-size:1rem;font-weight:700;}'
+        '[class*="st-key-subnav_"] button p:last-child{font-size:0.74rem;color:#555;'
+        "margin-top:3px;}</style>",
+        unsafe_allow_html=True,
+    )
+    for _idx, (_lbl, _fn, _subkey) in enumerate(_subs):
+        _b = st.session_state.get("status", {}).get(_active, {}).get(_subkey, "")
+        _label = _lbl + (f"\n\n{_b}" if _b else "")
+        if st.button(_label, key=f"subnav_{_active}_{_idx}", use_container_width=True,
+                     type="primary" if st.session_state[_sel_key] == _idx else "secondary"):
+            st.session_state[_sel_key] = _idx
+            st.rerun()
+    st.divider()
+    _subs[st.session_state[_sel_key]][1]()
