@@ -47,15 +47,17 @@ modules/
 tests/                           # pytest suite — 115 tests, 0 failures
 ```
 
-**Wizard screens (main.py)**
-1. חיבור + שאילתת מילון (connection + SOQL builder)
+**Wizard navigation (main.py)** — top process-bar `_topbar()` with 5 steps (click to navigate via
+`st.session_state["step"]`); per-step live status badges via `_set_status`/`_status_badge`. The
+sidebar is slim (refresh buttons + personal notes only). Steps 4–5 bundle two builders each, switched
+by a horizontal `st.radio` sub-nav (not `st.tabs` — avoids running both pipelines). Step model = `STEPS`.
+
+1. חיבור + שאילתות — `screen_step1`: connect 3 sheets + query builder (`screen_queries`: dropdown over
+   FieldDefinition + per-object DB-export queries, editable before copy) + DB check (`screen_db_validation`)
 2. מיפוי (column mapping with inline edit)
-3. מנגנוני זיהוי (identity mechanisms)
-4. ייצוא DB (DB export queries)
-5. Contacts
-6. Campaigns
-7. קשרים (Relationships)
-8. CampaignMembers
+3. מנגנוני זיהוי (identity mechanisms — up to `_N_MECHANISMS`=5)
+4. גיליונות ראשיים — sub-nav: Contacts | Campaigns
+5. גיליונות מותנים — sub-nav: Relationships | CampaignMembers
 
 ## Google credentials
 
@@ -75,4 +77,3 @@ If `git remote -v` returns empty, run: `git remote add origin https://github.com
 - False-positive 🔴 on compound fields (FirstName/LastName, Mailing/Other address components) — not returned by FieldDefinition but valid for loading. Mitigated by `KNOWN_STANDARD_FIELDS` allowlist in `mapper.py`.
 - No 15→18 Salesforce Id conversion (validator warns on Id length ≠ 18).
 - Identity mechanisms for Contacts only; Campaigns identified by name only.
-- Navigation UI redesign (top bar, remove sidebar step list) — deferred to a separate task.

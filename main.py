@@ -20,9 +20,8 @@ st.markdown(
     ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton,"
     ' [data-testid="stHeading"], h1, h2, h3, h4 {direction: rtl; text-align: right;}'
     '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
-    # פאנל-צד: הרחבה קלה + טקסט-שלבים מעט גדול יותר לנוחות
-    ' [data-testid="stSidebar"] {min-width: 340px;}'
-    ' [data-testid="stSidebar"] [role="radiogroup"] label p {font-size: 1.05rem;}'
+    # פאנל-צד צר: הניווט עבר לסרגל העליון; נשארו רק רענון + פתק-הערות
+    ' [data-testid="stSidebar"] {min-width: 280px; max-width: 320px;}'
     "</style>",
     unsafe_allow_html=True,
 )
@@ -52,6 +51,49 @@ def _read_cached(link: str, tab: str | None) -> list[list[str]]:
     אחרי כתיבה לגיליון יש לרוקן את המטמון (`_read_cached.clear()`) כדי לא להציג נתון ישן.
     """
     return sheets_io.read_values(link, tab=tab)
+
+
+# ===== ניווט: סרגל-שלבים עליון + סטטוס חי =====
+# st.session_state["status"][step_index][sub] = טקסט-badge קצר.
+# כל מסך כותב את הסטטוס שלו בסוף הצינור (lazy) — הסרגל בלבד קורא משם; אין צימוד בין המסכים.
+
+def _set_status(step: int, text: str, sub: str = "") -> None:
+    """שומר badge-טקסט לשלב. `sub` מבדיל בין תת-מסכי שלבים 4/5 (אנשי-קשר/קמפיינים וכו')."""
+    st.session_state.setdefault("status", {}).setdefault(step, {})[sub] = text
+
+
+def _status_badge(step: int) -> str:
+    """מאחד את כל ה-badges של שלב (כולל תת-מסכים) למחרוזת אחת לסרגל."""
+    parts = st.session_state.get("status", {}).get(step, {})
+    return " · ".join(p for p in parts.values() if p)
+
+
+def _truncate(s: str, n: int = 12) -> str:
+    """קיצור שם-שדה ל-badge בסרגל (השם המלא נשאר בתצוגת המסך)."""
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _topbar() -> None:
+    """סרגל-שלבים עליון: ניווט בלחיצה + badge-סטטוס לכל שלב (RTL טבעי)."""
+    cols = st.columns(len(STEPS))
+    active = st.session_state.get("step", 0)
+    status = st.session_state.get("status", {})
+    for i, (col, step) in enumerate(zip(cols, STEPS)):
+        with col:
+            done = bool(status.get(i))
+            prefix = "✓ " if done else f"{i + 1} · "
+            if st.button(prefix + step["label"], key=f"nav_{i}",
+                         use_container_width=True,
+                         type="primary" if i == active else "secondary"):
+                st.session_state["step"] = i
+                st.rerun()
+            badge = _status_badge(i)
+            st.markdown(
+                f"<div style='text-align:center;font-size:0.8rem;color:#555;"
+                f"min-height:1.2em'>{badge or '—'}</div>",
+                unsafe_allow_html=True,
+            )
+    st.divider()
 
 
 def _sidebar_controls() -> None:
@@ -85,33 +127,15 @@ def _sidebar_controls() -> None:
     if "user_notes" not in st.session_state:
         st.session_state["user_notes"] = notes_store.load()
     notes_val = st.sidebar.text_area(
-        "📝 הערות אישיות", key="user_notes", height=320,
+        "📝 הערות אישיות", key="user_notes", height=520,
         placeholder="מקום לרשום לעצמך תזכורות על התהליך…",
     )
     notes_store.save(notes_val)
 
 
 def screen_connection() -> None:
-    """שלב 0 — חיבור גיליונות + בניית שאילתת SOQL למילון השדות."""
-    st.header("1 · חיבור + שאילתת מילון")
-
-    # ===== בונה שאילתת SOQL (שלב 1 לשעבר) — מקופל מעל החיבור =====
-    with st.expander("בניית שאילתת מילון (FieldDefinition) ל-Inspector", expanded=False):
-        st.write(
-            "הזן שמות-API של אובייקטים (אחד בכל שורה). הכלי ירכיב שאילתה — העתק "
-            "ל-Salesforce Inspector, הרץ, ושמור את התוצאה כגיליון *מיפוי אובייקטים ושדות*, "
-            "ואז חבר אותו למטה."
-        )
-        default_objects = "\n".join(template_config.DEFAULT_OBJECTS)
-        raw = st.text_area("אובייקטים", value=default_objects, height=140, key="soql_objects")
-        objects = query_builder.clean_object_names(raw)
-        if objects:
-            st.caption(f"{len(objects)} אובייקטים: {', '.join(objects)}")
-            st.code(query_builder.build_field_definition_query(objects), language="sql")
-        else:
-            st.warning("לא הוזנו אובייקטים — אין שאילתה להציג.")
-
-    st.divider()
+    """שלב 0 — חיבור שלושת הגיליונות."""
+    st.header("חיבור גיליונות")
 
     # ===== חיבור שלושת הגיליונות =====
     try:
@@ -133,6 +157,11 @@ def screen_connection() -> None:
         else:
             resolved = next((r["id"] for r in recents if r["name"] == sel), "")
         st.session_state[f"link_{key}"] = resolved
+
+    # סטטוס לסרגל: כמה מ-3 הגיליונות מחוברים (קישור נבחר)
+    n_linked = sum(1 for k, _, _ in SHEETS if st.session_state.get(f"link_{k}"))
+    if n_linked:
+        _set_status(0, f"{n_linked}/3 מחוברים")
 
     if st.button("בדוק חיבור"):
         st.divider()
@@ -336,6 +365,13 @@ def screen_mapping() -> None:
     )
     st.markdown(f"<div style='font-size:1.15rem'>{legend}</div>", unsafe_allow_html=True)
 
+    # סטטוס לסרגל: התאמה / בקרה / (אם יש) אדומות
+    _valid = counts.get(mapper.STATUS_VALID, 0)
+    _control = counts.get(mapper.STATUS_CONTROL, 0)
+    _red = counts.get(mapper.STATUS_INVALID, 0) + counts.get(mapper.STATUS_MISSING, 0)
+    _badge = f"✅{_valid} · 🏳️{_control}" + (f" · 🔴{_red}" if _red else "")
+    _set_status(1, _badge)
+
     for w in dict_warnings:
         st.warning(w)
 
@@ -402,7 +438,7 @@ def screen_mapping() -> None:
                 st.error(f"כשל בכתיבה לטמפלייט: {e}")
 
 
-_N_MECHANISMS = 3
+_N_MECHANISMS = 5
 
 
 def screen_identity() -> None:
@@ -486,61 +522,103 @@ def screen_identity() -> None:
         else:
             st.info("נשמרה רשימה ריקה (אין מנגנון פעיל).")
 
+    # סטטוס לסרגל: ✓ + שם-השדה הראשון (מקוצר) לכל מנגנון שמור
+    saved_mechs = st.session_state.get("mechanisms") or []
+    if saved_mechs:
+        full = {api: lbl.split(" — ", 1)[-1] for api, lbl in pool.items()}
+        _set_status(2, " · ".join(
+            "✓" + _truncate(full.get(m[0], m[0])) for m in saved_mechs if m
+        ))
 
-def screen_db_export() -> None:
-    """שלב 4 — שאילתות SELECT לייצוא DB + ולידציה של הגיליון המחובר."""
-    st.header("4 · ייצוא DB")
-    st.write(
-        "הרץ כל שאילתה ב-Salesforce Inspector, שמור את התוצאה בגיליון ה-DB בלשונית "
-        "המוצגת, ואז לחץ *בדוק DB* לאימות."
-    )
 
-    template_link = st.session_state.get("link_template", "")
-    soql_link = st.session_state.get("link_soql", "")
-    if not template_link or not soql_link:
-        st.warning("חסר חיבור — חזור למסך החיבור וחבר את *עותק הטמפלייט* ואת *מיפוי אובייקטים ושדות*.")
-        return
-
-    try:
-        cols, _warnings, _dictionary = _run_mapping_pipeline(template_link, soql_link)
-    except Exception as e:  # noqa: BLE001
-        st.error(f"שגיאה בקריאת הגיליונות:\n\n{e}")
-        return
-
-    # אובייקט → שדות תקפים (ייחוד — שני בלוקי Contact לא כופלים שדות)
+def _db_queries(template_link: str, soql_link: str) -> dict[str, list[str]]:
+    """ממפה אובייקט→שדות-תקפים לייצוא DB (כולל שדות-lookup נגזרים). עלול לזרוק על כשל-קריאה."""
+    cols, _w, _d = _run_mapping_pipeline(template_link, soql_link)
     queries: dict[str, list[str]] = {}
     for c in cols:
         if c.status == mapper.STATUS_VALID and c.clean_api:
             fields = queries.setdefault(c.object_api, [])
             if c.clean_api not in fields:
                 fields.append(c.clean_api)
-
     # שדות נגזרים שאינם בטמפלייט אך נדרשים לקריאת ה-DB (כגון lookups של Relationships)
     for obj, extra in template_config.REQUIRED_DB_FIELDS.items():
         if obj in queries:
             for f in extra:
                 if f not in queries[obj]:
                     queries[obj].append(f)
+    return queries
 
-    if not queries:
-        st.warning("אין עמודות ממופות תקפות — השלם קודם את המיפוי.")
+
+def screen_queries() -> None:
+    """שלב 1 — בונה שאילתות: מילון FieldDefinition + ייצוא-DB לכל אובייקט, עם עריכה לפני העתקה."""
+    st.subheader("שאילתות (העתק ל-Inspector)")
+    st.write(
+        "בחר שאילתה מהרשימה, ערוך אותה אם צריך, והעתק ל-Salesforce Inspector. שמור כל "
+        "תוצאה ללשונית המתאימה (מוצגת מתחת)."
+    )
+
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
+
+    # אובייקטים למילון השדות (FieldDefinition) — ניתנים לעריכה
+    default_objects = "\n".join(template_config.DEFAULT_OBJECTS)
+    with st.expander("אובייקטים למילון השדות", expanded=False):
+        raw = st.text_area("אובייקט בכל שורה", value=default_objects, height=120, key="soql_objects")
+    objects = query_builder.clean_object_names(raw)
+
+    # מאגר השאילתות הזמינות: מילון (תמיד, אם יש אובייקטים) + ייצוא-DB לכל אובייקט (אם המיפוי מוכן)
+    query_map: dict[str, str] = {}
+    tab_hint: dict[str, str] = {}
+    if objects:
+        query_map["מילון שדות (FieldDefinition)"] = query_builder.build_field_definition_query(objects)
+    if template_link and soql_link:
+        try:
+            for obj, fields in _db_queries(template_link, soql_link).items():
+                label = f"ייצוא DB — {obj}"
+                query_map[label] = query_builder.build_data_query(obj, fields)
+                tab_hint[label] = template_config.DB_TAB_NAMES.get(obj, obj)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"שגיאה בבניית שאילתות הייצוא:\n\n{e}")
+
+    if not query_map:
+        st.info("הזן אובייקטים למילון, או חבר את הטמפלייט והמיפוי כדי לקבל גם שאילתות ייצוא-DB.")
         return
 
-    # ===== סקשן A: שאילתות לייצוא =====
-    st.subheader("שאילתות לייצוא ב-Inspector")
-    for obj, fields in queries.items():
-        tab_name = template_config.DB_TAB_NAMES.get(obj, obj)
-        with st.expander(f"**{obj}** — {len(fields)} שדות + Id", expanded=True):
-            st.code(query_builder.build_data_query(obj, fields), language="sql")
-            st.caption(f"שמור תוצאה ללשונית: **{tab_name}**")
+    selected = st.selectbox("בחר שאילתה", list(query_map), key="query_pick")
+    # זריעה-מחדש של העורך כשמשנים בחירה (אחרת הערך נצמד לשאילתה הקודמת)
+    if st.session_state.get("_query_pick_last") != selected:
+        st.session_state["query_editor"] = query_map[selected]
+        st.session_state["_query_pick_last"] = selected
+    st.text_area("שאילתה (ניתנת לעריכה)", key="query_editor", height=170)
+    if selected in tab_hint:
+        st.caption(f"שמור את התוצאה ללשונית: **{tab_hint[selected]}**")
+    else:
+        st.caption("שמור את התוצאה כגיליון *מיפוי אובייקטים ושדות* וחבר אותו למעלה.")
+    # תצוגת-העתקה נקייה (LTR + כפתור-העתקה) של מה שבעורך
+    st.code(st.session_state.get("query_editor", ""), language="sql")
 
-    # ===== סקשן B: ולידציה של גיליון ה-DB =====
-    st.divider()
+
+def screen_db_validation() -> None:
+    """שלב 1 — אימות גיליון ה-DB מול הלשוניות הנדרשות."""
     st.subheader("סטטוס גיליון ה-DB")
 
+    template_link = st.session_state.get("link_template", "")
+    soql_link = st.session_state.get("link_soql", "")
     db_link = st.session_state.get("link_db", "")
+    if not template_link or not soql_link:
+        st.info("חבר את הטמפלייט והמיפוי למעלה כדי לבדוק את גיליון ה-DB.")
+        return
     if not db_link:
-        st.info("גיליון DB אינו מחובר — חזור למסך החיבור וחבר אותו.")
+        st.info("גיליון DB אינו מחובר — חבר אותו למעלה.")
+        return
+
+    try:
+        queries = _db_queries(template_link, soql_link)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"שגיאה בקריאת הגיליונות:\n\n{e}")
+        return
+    if not queries:
+        st.warning("אין עמודות ממופות תקפות — השלם קודם את המיפוי.")
         return
 
     if st.button("בדוק DB"):
@@ -567,7 +645,7 @@ def screen_db_export() -> None:
 
 def screen_contacts() -> None:
     """שלב 5 — בניית גריד Contacts מוכן-לטעינה וכתיבתו ללשונית-פלט בטמפלייט."""
-    st.header("5 · בניית אנשי קשר לטעינה")
+    st.header("בניית אנשי קשר לטעינה")
     st.write(
         "הכלי קורא את אנשי הקשר מהטמפלייט, מאחד כפילויות, ומשווה למאגר כדי לדעת מי "
         "כבר קיים (לעדכון) ומי חדש. רשומות לעדכון מקבלות גם השלמת פרטים חסרים מהמאגר. "
@@ -624,6 +702,8 @@ def screen_contacts() -> None:
         f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} אנשים ייחודיים · "
         f"{len(db_records)} רשומות במאגר"
     )
+    _set_status(3, f"א.קשר: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים",
+                sub="contacts")
 
     # ===== תצוגה מקדימה =====
     # שתי שורות-כותרת (עברית מעל API); כותרת התצוגה = העברית, נתונים משורה 2 ואילך.
@@ -710,7 +790,7 @@ def screen_campaigns() -> None:
     מקביל ל-screen_contacts, אך הזיהוי הוא לפי **שם** בלבד (CAMPAIGN_MECHANISMS) —
     לא מנגנוני-הזיהוי של Contacts. כל שורות-ההרשמה לאותו אירוע מתקבצות לקמפיין אחד.
     """
-    st.header("6 · בניית קמפיינים לטעינה")
+    st.header("בניית קמפיינים לטעינה")
     st.write(
         "הכלי קורא את האירועים מהטמפלייט, מאחד שורות עם אותו שם-אירוע לקמפיין אחד, "
         "ומשווה למאגר כדי לדעת אילו קמפיינים כבר קיימים (לעדכון) ואילו חדשים. "
@@ -764,6 +844,8 @@ def screen_campaigns() -> None:
         f"{len(record_values)} שורות מהטמפלייט → {len(dedup.persons)} קמפיינים ייחודיים · "
         f"{len(db_records)} רשומות במאגר"
     )
+    _set_status(3, f"קמפיינים: {c.get('inserts', 0)} חדשים · {c.get('upserts', 0)} קיימים",
+                sub="campaigns")
 
     # ===== תצוגה מקדימה =====
     if len(grid) > 2:
@@ -846,7 +928,7 @@ def screen_relationship() -> None:
     הצינור קורא את "פלט - Contacts" לבניית local_key→Id, גוזר קשרים מהטמפלייט,
     מסנן זוגות קיימים-ב-DB, וכותב את החדשים ללשונית "פלט - Relationships".
     """
-    st.header("7 · בניית קשרים לטעינה")
+    st.header("בניית קשרים לטעינה")
     st.write(
         "הכלי גוזר קשרים בין אנשי-קשר ראשי לנוסף מכל שורה, ומסנן זוגות שכבר קיימים "
         "במאגר. **לחץ על הכפתור לאחר שטענת את Contacts לסיילספורס וה-Ids הודבקו חזרה "
@@ -923,6 +1005,7 @@ def screen_relationship() -> None:
             new_count = max(len(grid) - 2, 0)
             skipped_db = sum(1 for r in rel_records if r.exists_in_db)
             pending_id = sum(1 for r in rel_records if r.warning)
+            _set_status(4, f"קשרים: {new_count} חדשים · {skipped_db} קיימים", sub="rel")
 
             # אינדיקציית בדיקת-כפילויות — בראש התוצאות כדי שלא תתפספס.
             # שני המספרים (רשומות → זוגות) מוכיחים שהכיוון ההפוך אוחד: NPSP שומר כל
@@ -966,7 +1049,7 @@ def screen_campaign_members() -> None:
     לכל שורה עם "משתתף באירוע"=TRUE (לראשי / לנוסף) נוצרת רשומת CampaignMember.
     v1: טוען את כולם ללא בדיקת-קיום מול DB.
     """
-    st.header("8 · בניית CampaignMember")
+    st.header("בניית CampaignMember")
     st.write(
         "הכלי יוצר רשומת השתתפות לכל אדם שסומן כ-'משתתף באירוע', ומקשר אותו "
         "לקמפיין המתאים. **לחץ על הכפתור לאחר שטענת Contacts ו-Campaigns לסיילספורס "
@@ -1054,6 +1137,7 @@ def screen_campaign_members() -> None:
 
             written = max(len(grid) - 2, 0)
             pending = sum(1 for r in cm_records if r.warning)
+            _set_status(4, f"CM: {written} נוצרו", sub="cm")
 
             for r in cm_records:
                 if r.warning:
@@ -1077,17 +1161,38 @@ def screen_campaign_members() -> None:
             st.error(f"שגיאה בבניית CampaignMember:\n\n{e}")
 
 
-SCREENS = {
-    "1 · חיבור": screen_connection,
-    "2 · מיפוי": screen_mapping,
-    "3 · מנגנוני זיהוי": screen_identity,
-    "4 · ייצוא DB": screen_db_export,
-    "5 · בניית Contacts": screen_contacts,
-    "6 · בניית Campaigns": screen_campaigns,
-    "7 · בניית Relationships": screen_relationship,
-    "8 · בניית CampaignMember": screen_campaign_members,
-}
+def screen_step1() -> None:
+    """שלב 1 — חיבור הגיליונות + שאילתות (מילון FieldDefinition + ייצוא DB) + בדיקת DB."""
+    screen_connection()
+    st.divider()
+    screen_queries()
+    st.divider()
+    screen_db_validation()
 
-choice = st.sidebar.radio("שלב", list(SCREENS.keys()))
+
+# מבנה 5 השלבים. שלבים 4–5 מקבצים שני בונים כל אחד (תת-ניווט פנימי).
+STEPS = [
+    {"label": "חיבור + שאילתות", "screen": screen_step1},
+    {"label": "מיפוי", "screen": screen_mapping},
+    {"label": "מנגנוני זיהוי", "screen": screen_identity},
+    {"label": "גיליונות ראשיים",
+     "subs": [("אנשי קשר", screen_contacts), ("קמפיינים", screen_campaigns)]},
+    {"label": "גיליונות מותנים",
+     "subs": [("קשרים", screen_relationship), ("CampaignMember", screen_campaign_members)]},
+]
+
+if "step" not in st.session_state:
+    st.session_state["step"] = 0
+
+_topbar()
 _sidebar_controls()
-SCREENS[choice]()
+
+_active = st.session_state["step"]
+_step = STEPS[_active]
+if "screen" in _step:
+    _step["screen"]()
+else:
+    # תת-ניווט אופקי בשלבים 4/5 — רץ רק הבונה שנבחר (לא st.tabs, שמריץ את שניהם)
+    _subs = dict(_step["subs"])
+    _chosen = st.radio("בחר גיליון", list(_subs), key=f"sub_{_active}", horizontal=True)
+    _subs[_chosen]()

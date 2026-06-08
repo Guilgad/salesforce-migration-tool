@@ -62,3 +62,6 @@ tmp/
 # === קבצים זמניים של תהליך הפיתוח ===
 _commitmsg.txt
 _probe_*.py
+
+# === Superpowers brainstorming (מוקאפים מקומיים) ===
+.superpowers/
