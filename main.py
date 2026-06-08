@@ -57,17 +57,19 @@ def _read_cached(link: str, tab: str | None) -> list[list[str]]:
 def _sidebar_controls() -> None:
     """
     שני כפתורים זה-לצד-זה מעל הקו המפריד, ותחתיו פתק-הערות אישי שנשמר מקומית:
-    - 'רענן נתונים'        — מרוקן את מטמון-הקריאה (קורא נתונים טריים מהגיליונות).
-    - 'רענן ואפס הגדרות'   — מרוקן מטמון *וגם* מוחק בחירות; משאיר חיבורים והערות.
+    - 'רענן את 3 הגיליונות'      — מרוקן את מטמון-הקריאה (קורא נתונים טריים מטמפלייט+DB+מיפוי).
+    - 'רענן ואפס מנגנונים ומיפוי' — מרוקן מטמון *וגם* מאפס מנגנוני-זיהוי ובחירות-מיפוי;
+                                    משאיר חיבורים והערות.
     """
     c1, c2 = st.sidebar.columns(2)
-    if c1.button("רענן נתונים", use_container_width=True,
-                 help="קורא מחדש נתונים עדכניים משלושת הגיליונות. לא נוגע בבחירות שלך."):
+    if c1.button("רענן את 3 הגיליונות", use_container_width=True,
+                 help="קורא מחדש נתונים עדכניים משלושת הגיליונות (טמפלייט, DB, מיפוי). "
+                      "לא נוגע בבחירות שלך."):
         _read_cached.clear()
         st.rerun()
-    if c2.button("רענן ואפס הגדרות", use_container_width=True,
-                 help="מנקה נתונים *וגם* מאפס את הבחירות בכלי (מנגנונים, תיקוני מיפוי). "
-                      "החיבורים וההערות נשארים."):
+    if c2.button("רענן ואפס מנגנונים ומיפוי", use_container_width=True,
+                 help="מנקה נתונים *וגם* מאפס את מנגנוני-הזיהוי ואת בחירות-המיפוי "
+                      "(אובייקט+API לכל עמודה). החיבורים וההערות נשארים."):
         _read_cached.clear()
         # מנקה בחירות וחישובים, אך משאיר את החיבורים, ההערות וכל השאר על כנם
         for k in list(st.session_state.keys()):
@@ -143,21 +145,23 @@ def screen_connection() -> None:
                 recent_sheets.remember(key, sheets_io.extract_id(link), status.name)
 
 
-# סטטוס → (אייקון, תווית-תיאור). הסדר כאן הוא סדר המקרא.
-_STATUS_LABEL = {
-    mapper.STATUS_VALID: ("✅", "התאמה"),
-    mapper.STATUS_INVALID: ("🔴", "התאמה שגויה"),
-    mapper.STATUS_MISSING: ("🟡", "לא נמצאה התאמה"),
-    mapper.STATUS_CONTROL: ("🎚️", "בקרה (לא נטען)"),
-    mapper.STATUS_NO_DICT: ("⚠️", "האובייקט לא נכלל בשאילתא"),
-    mapper.STATUS_IGNORE: ("⚪", "לא רלוונטי"),
-}
-_STATUS_ICON = {s: icon for s, (icon, _lbl) in _STATUS_LABEL.items()}
+# מקרא מקובץ: (אייקון, תווית, [סטטוסים]). הסדר כאן הוא סדר המקרא.
+# 'התאמה שגויה' ו'לא נמצאה התאמה' מאוחדים לנורית אדומה אחת.
+_LEGEND = [
+    ("✅", "התאמה", [mapper.STATUS_VALID]),
+    ("🔴", "התאמה שגויה/חסרה", [mapper.STATUS_INVALID, mapper.STATUS_MISSING]),
+    ("🏳️", "בקרה (לא נטען)", [mapper.STATUS_CONTROL]),
+    ("⚠️", "האובייקט לא בשאילתא", [mapper.STATUS_NO_DICT]),
+    ("⚪", "לא רלוונטי", [mapper.STATUS_IGNORE]),
+]
+# כל סטטוס → אייקון-הקבוצה שלו (INVALID ו-MISSING → 🔴).
+_STATUS_ICON = {s: icon for icon, _lbl, statuses in _LEGEND for s in statuses}
 
 # רקע-שורה עדין לסטטוסים שדורשים תשומת-לב (כל מה שאינו "התאמה") — כדי שיבלטו מיד.
+# INVALID ו-MISSING מאוחדים לנורית אדומה אחת → שניהם ברקע אדמדם.
 _ROW_TINT = {
     mapper.STATUS_INVALID: "#fdecea",   # אדמדם
-    mapper.STATUS_MISSING: "#fff6e0",   # צהבהב
+    mapper.STATUS_MISSING: "#fdecea",   # אדמדם
     mapper.STATUS_NO_DICT: "#fdecea",   # אדמדם
 }
 
@@ -204,7 +208,7 @@ def _validation_summary(
     """
     issues, marks = validator.validate_output_grid(grid, object_api, dictionary)
     if not issues:
-        st.success("בדיקת נתונים: לא נמצאו בעיות ✅")
+        st.success("בדיקת נתונים: לא נמצאו בעיות ✅ (נבדקו: תאריכים ומזהי Id)")
         return marks
     bad_dates = sum(1 for i in issues if i.kind == validator.KIND_BAD_DATE)
     bad_ids = sum(1 for i in issues if i.kind == validator.KIND_BAD_ID)
@@ -272,7 +276,20 @@ def _object_selectbox(c: mapper.TemplateColumn, base_objs: list[str]) -> str:
 
 def _api_selectbox(c: mapper.TemplateColumn, obj: str, dictionary: dict) -> str:
     """dropdown API לשורה, תלוי באובייקט שנבחר. מחזיר את ה-API שנבחר (או ידני)."""
-    disp2api = {f"{f.api} — {f.label}": f.api for f in mapper.candidates_for(obj, dictionary)}
+    # תצוגה = שם השדה בעברית (Label); הערך הנשמר = ה-API. כפילות-תוויות → API בסוגריים לייחוד.
+    fields = mapper.candidates_for(obj, dictionary)
+    label_counts: dict[str, int] = {}
+    for f in fields:
+        label_counts[f.label] = label_counts.get(f.label, 0) + 1
+    disp2api = {}
+    for f in fields:
+        if not f.label:
+            disp = f.api  # שדה ללא תווית — מציגים את ה-API עצמו
+        elif label_counts[f.label] == 1:
+            disp = f.label
+        else:
+            disp = f"{f.label} ({f.api})"  # תווית כפולה — מוסיפים API לייחוד
+        disp2api[disp] = f.api
     opts = [_OTHER, _BLANK] + list(disp2api)
     # עמודת-בקרה מגיעה ריקה; שדה ללא ערך נברירת-מחדל ל"ריק" (לא מציע שדה שגוי אוטומטית)
     cur = "" if c.status == mapper.STATUS_CONTROL else (c.clean_api or c.proposed_api)
@@ -314,7 +331,8 @@ def screen_mapping() -> None:
     for c in cols:
         counts[c.status] = counts.get(c.status, 0) + 1
     legend = " · ".join(
-        f"{icon} {lbl} ({counts.get(s, 0)})" for s, (icon, lbl) in _STATUS_LABEL.items()
+        f"{icon} {lbl} ({sum(counts.get(s, 0) for s in statuses)})"
+        for icon, lbl, statuses in _LEGEND
     )
     st.markdown(f"<div style='font-size:1.15rem'>{legend}</div>", unsafe_allow_html=True)
 
