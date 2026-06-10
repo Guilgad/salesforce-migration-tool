@@ -25,6 +25,8 @@ st.markdown(
     ".stApp, .stMarkdown, .stTextInput, .stTextArea, .stButton,"
     ' [data-testid="stHeading"], h1, h2, h3, h4 {direction: rtl; text-align: right;}'
     '[data-testid="stCode"], [data-testid="stCode"] * {direction: ltr; text-align: left;}'
+    # עורך-השאילתה (SQL) — גם הוא LTR, אחרת הקוד מוצג הפוך/מיושר-לימין
+    " .st-key-query_editor textarea {direction: ltr; text-align: left;}"
     # פאנל-צד צר: הניווט עבר לסרגל העליון; נשארו רק כותרת + רענון + פתק-הערות
     ' [data-testid="stSidebar"] {min-width: 280px; max-width: 320px;}'
     # הסתרת chrome נייטיב חסר-תועלת לכלי מקומי: כפתור Deploy + חיצי כיווץ הסרגל-צד
