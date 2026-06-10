@@ -653,10 +653,12 @@ def screen_queries() -> None:
         return
 
     selected = st.selectbox("בחר שאילתה", list(query_map), key="query_pick")
-    # זריעה-מחדש של העורך כשמשנים בחירה (אחרת הערך נצמד לשאילתה הקודמת)
-    if st.session_state.get("_query_pick_last") != selected:
-        st.session_state["query_editor"] = query_map[selected]
-        st.session_state["_query_pick_last"] = selected
+    generated = query_map[selected]
+    # זריעה-מחדש של העורך כשמשתנה הבחירה *או* התוכן שנוצר (למשל אחרי עריכת רשימת
+    # האובייקטים) — עריכות-ידניות נשמרות כל עוד הבחירה והאובייקטים לא השתנו.
+    if st.session_state.get("_query_seed") != (selected, generated):
+        st.session_state["query_editor"] = generated
+        st.session_state["_query_seed"] = (selected, generated)
     st.text_area("שאילתה (ניתנת לעריכה)", key="query_editor", height=170)
     if selected in tab_hint:
         st.caption(f"שמור את התוצאה ללשונית: **{tab_hint[selected]}**")
