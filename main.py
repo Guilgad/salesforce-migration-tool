@@ -532,6 +532,44 @@ def screen_mapping() -> None:
             for c in hidden:
                 st.markdown(f"- **{sheets_io.col_letter(c.index)}** · {c.label or '*(ריק)*'}")
 
+    # ידני → כתיבה לקובץ-המקור (שורת ה-API). מקור-אמת יחיד, שורד איפוס.
+    by_index = {c.index: c for c in columns}
+    pending = {
+        idx: m.field_api
+        for idx, m in schema.mappings.items()
+        if m.source == "manual" and m.role == ROLE_FIELD and m.field_api
+        and idx in by_index
+        and m.field_api != mapper.normalize_api(by_index[idx].proposed_api)
+    }
+    if pending:
+        st.divider()
+        st.markdown("**מיפויים ידניים שטרם נשמרו לקובץ-המקור:**")
+        for idx, api in sorted(pending.items()):
+            st.markdown(
+                f"- עמ' {sheets_io.col_letter(idx)} · {by_index[idx].label} → `{api}`"
+            )
+        if st.button(f"💾 שמור {len(pending)} מיפויים לקובץ-המקור"):
+            try:
+                updates = [(schema.api_row, idx, api) for idx, api in pending.items()]
+                sheets_io.write_cells(schema.input_sheet_id, schema.input_tab, updates)
+                # עדכון העותק שבזיכרון — המסך משקף מיד, בלי קריאה חוזרת מ-Google
+                rows_mem = st.session_state["input_rows"]
+                while len(rows_mem) <= schema.api_row:
+                    rows_mem.append([])
+                api_row = rows_mem[schema.api_row]
+                for idx, api in pending.items():
+                    while len(api_row) <= idx:
+                        api_row.append("")
+                    api_row[idx] = api
+                    schema.mappings[idx].source = "file"
+                # טביעת-האצבע מתעדכנת כדי שהמיפוי לא ייבנה-מחדש (וישמור עריכות אחרות)
+                new_cols = schema_reader.read_header_columns(rows_mem, schema)
+                st.session_state["_map_fp"] = _map_fingerprint(new_cols, dictionary)
+                st.success("נשמר לקובץ-המקור — יישאר גם אחרי איפוס.")
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"כשל בכתיבה לקובץ-המקור: {e}")
+
 
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
