@@ -103,8 +103,52 @@ def _topbar() -> None:
 
 
 def _screen_queries() -> None:
-    """Stub — implemented in Task 5."""
-    st.info("שאילתות — בפרוסה Task 5")
+    """Query builder — right column of step 1."""
+    fd_label = "מילון שדות (FieldDefinition)"
+    query_options: list[str] = [fd_label] + [
+        f"ייצוא DB — {o.api_name}" for o in schema.objects
+    ]
+
+    if len(query_options) == 1 and not schema.objects:
+        st.info("חבר גיליון-קלט כדי לראות שאילתות.")
+        return
+
+    selected = st.selectbox("בחר שאילתה", query_options, key="query_pick")
+
+    generated = ""
+    if selected == fd_label:
+        all_objects = [o.api_name for o in schema.objects]
+        default_sel = schema.fielddict_objects or all_objects
+        chosen_objs = st.multiselect(
+            "אובייקטים לכלול",
+            options=all_objects,
+            default=[o for o in default_sel if o in all_objects],
+            key="fd_obj_select",
+        )
+        schema.fielddict_objects = chosen_objs
+        if not chosen_objs:
+            st.warning("בחר לפחות אובייקט אחד.")
+        generated = query_builder.build_field_definition_query(chosen_objs)
+    elif selected.startswith("ייצוא DB — "):
+        obj_api = selected[len("ייצוא DB — "):]
+        st.caption(f"💡 שמור תוצאה ללשונית: **{obj_api}** בגיליון ה-DB")
+        generated = query_builder.build_data_query(obj_api, [])
+
+    seed_key = (selected, generated)
+    if st.session_state.get("_query_seed") != seed_key:
+        st.session_state["query_editor"] = generated
+        st.session_state["_query_seed"] = seed_key
+
+    st.text_area("שאילתה (ניתנת לעריכה)", key="query_editor", height=200)
+
+    if st.button("📋 העתק", key="copy_query"):
+        query_text = st.session_state.get("query_editor", "")
+        escaped = query_text.replace("\\", "\\\\").replace("`", "\\`")
+        st.markdown(
+            f"<script>navigator.clipboard.writeText(`{escaped}`)</script>",
+            unsafe_allow_html=True,
+        )
+        st.success("הועתק ללוח!")
 
 
 def _parse_sheet_id(raw: str) -> str:
