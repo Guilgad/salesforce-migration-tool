@@ -27,7 +27,8 @@ st.markdown(
     ' [data-testid="stSidebar"] {min-width: 240px; max-width: 260px;}'
     ' [data-testid="stAppDeployButton"] {display: none;}'
     ' [data-testid="stSidebarCollapseButton"] {display: none;}'
-    " .block-container {padding-top: 1.5rem;}"
+    ' [data-testid="stHeader"] {display: none;}'
+    " .block-container {padding-top: 1rem;}"
     # top-bar card styles
     " .v2-card {border-radius:6px; padding:10px 14px; cursor:pointer;"
     "  font-size:0.82rem; line-height:1.35; min-height:64px;"
