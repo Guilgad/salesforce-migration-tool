@@ -44,3 +44,23 @@ def parse_date(value) -> str | None:
         except ValueError:
             continue
     return None
+
+
+# ערכים מוכרים לבוליאני (Checkbox). השוואה אחרי lower+strip.
+_BOOL_TRUE = {"true", "yes", "1", "כן", "אמת", "v", "✓"}
+_BOOL_FALSE = {"false", "no", "0", "לא"}
+
+
+def parse_bool(value) -> str | None:
+    """
+    מחזיר 'TRUE'/'FALSE' אם הערך ניתן לפירוש כבוליאני, אחרת None.
+    ריק/None → None (הקורא מחליט אם ריק = תקין).
+    """
+    text = normalize_text(value).lower()
+    if not text:
+        return None
+    if text in _BOOL_TRUE:
+        return "TRUE"
+    if text in _BOOL_FALSE:
+        return "FALSE"
+    return None
