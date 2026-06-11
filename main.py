@@ -404,11 +404,11 @@ def _distinct_values(input_rows: list[list[str]], col_index: int, limit: int = 2
     return out
 
 
-def _mapping_row(c, m, fields, datatypes, input_rows) -> None:
-    """שורת-מיפוי אחת: תווית · בורר-שדה · מקור · סטטוס · דוגמה."""
-    col_label, col_field, col_src, col_status, col_prev, col_vm = st.columns(
-        [3, 4, 1.2, 1.6, 3, 1]
-    )
+def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False) -> None:
+    """שורת-מיפוי אחת: תווית · בורר-שדה · מקור · סטטוס · דוגמה (· מופע)."""
+    widths = [3, 4, 1.2, 1.6, 3, 1] + ([1] if multi else [])
+    cols = st.columns(widths)
+    col_label, col_field, col_src, col_status, col_prev, col_vm = cols[:6]
 
     col_label.markdown(f"**{c.label or '—'}**")
     col_label.caption(f"עמ' {sheets_io.col_letter(c.index)}")
@@ -516,6 +516,12 @@ def _mapping_row(c, m, fields, datatypes, input_rows) -> None:
                 schema.value_maps.pop(c.index, None)
                 st.rerun()
 
+    if multi and m.role == ROLE_FIELD:
+        m.instance = int(cols[6].number_input(
+            "מופע", min_value=1, max_value=9, value=m.instance,
+            key=f"inst_{c.index}", label_visibility="collapsed",
+        ))
+
 
 def screen_mapping() -> None:
     """שלב 2 — מיפוי עמודות-הלקוח לשדות סיילספורס."""
@@ -576,17 +582,54 @@ def screen_mapping() -> None:
             datatypes = {f.api: f.datatype for f in fields}
             obj_cols = [c for c in columns if c.object_api == obj]
 
-            hdr = st.columns([3, 4, 1.2, 1.6, 3, 1])
-            for hcol, title in zip(
-                hdr,
-                ("עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס", "דוגמה → אחרי", "מפה"),
-            ):
+            multi = st.checkbox(
+                "האובייקט מופיע יותר מפעם אחת בשורה (למשל בעל/אישה)",
+                value=schema.multi_instance.get(obj, False),
+                key=f"multi_{obj}",
+            )
+            schema.multi_instance[obj] = multi
+
+            titles = ["עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס",
+                      "דוגמה → אחרי", "מפה"] + (["מופע"] if multi else [])
+            hdr = st.columns([3, 4, 1.2, 1.6, 3, 1] + ([1] if multi else []))
+            for hcol, title in zip(hdr, titles):
                 hcol.markdown(f"**{title}**")
             for c in obj_cols:
                 m = schema.mappings.get(c.index)
                 if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
                     continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
-                _mapping_row(c, m, fields, datatypes, input_rows)
+                _mapping_row(c, m, fields, datatypes, input_rows, multi)
+
+            od = next((o for o in schema.objects if o.api_name == obj), None)
+            if od is not None:
+                inst = [
+                    schema.mappings[c.index].instance
+                    for c in obj_cols
+                    if c.index in schema.mappings
+                    and schema.mappings[c.index].role == ROLE_FIELD
+                ]
+                od.instance_count = max(inst) if (multi and inst) else 1
+
+            with st.expander("➕ הוסף שדה (ערך קבוע לכל הרשומות)"):
+                for i, x in [
+                    (i, x) for i, x in enumerate(schema.extra_fields)
+                    if x.object_api == obj
+                ]:
+                    c1, c2 = st.columns([5, 1])
+                    c1.markdown(f"`{x.field_api}` = **{x.constant_value or '(ריק)'}**")
+                    if c2.button("🗑️", key=f"xf_del_{obj}_{i}"):
+                        schema.extra_fields.pop(i)
+                        st.rerun()
+                if fields:
+                    opts = [f"{f.label} ({f.api})" for f in fields]
+                    pick = st.selectbox("שדה", [_OPT_NONE] + opts, key=f"xf_pick_{obj}")
+                    val = st.text_input("ערך קבוע", key=f"xf_val_{obj}")
+                    if st.button("הוסף", key=f"xf_add_{obj}") and pick != _OPT_NONE:
+                        api = pick[pick.rfind("(") + 1:-1]
+                        schema.extra_fields.append(ExtraField(obj, api, val.strip()))
+                        st.rerun()
+                else:
+                    st.caption("אין מילון לאובייקט זה — חבר מילון-שדות כדי להוסיף.")
 
     hidden = [
         c for c in columns
