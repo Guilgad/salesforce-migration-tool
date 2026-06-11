@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config.runtime_schema import RuntimeSchema, ObjectDef  # noqa: F401 — ObjectDef used in Task 4
-from modules import (  # noqa: F401 — all used in Tasks 4–7
+from config.runtime_schema import (
+    RuntimeSchema, ObjectDef, ExtraField, ValueMap, ValueMapEntry,
+    ROLE_FIELD, ROLE_CONTROL, ROLE_SKIP, ST_OK, ST_CHECK,
+)
+from modules import (  # noqa: F401 — validator/notes_store used in later slices
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
-    schema_reader, validator, notes_store,
+    schema_reader, auto_mapper, validator, notes_store,
 )
 
 st.set_page_config(
@@ -205,7 +208,11 @@ def _sheet_connector(
         try:
             tabs = sheets_io.list_tabs(sheet_id)
             st.session_state[f"{role}_tabs"] = tabs
-            recent_sheets.save_recent(role, sheet_id)
+            try:
+                name = sheets_io.get_spreadsheet_meta(sheet_id).get("name", sheet_id)
+            except Exception:  # noqa: BLE001 — שם הוא רק לתצוגת "אחרונים"
+                name = sheet_id
+            recent_sheets.remember(role, sheet_id, name)
         except Exception as e:
             st.error(f"שגיאה בחיבור: {e}")
             return sheet_id, "", None
@@ -226,10 +233,14 @@ def _sheet_connector(
     st.session_state[tab_key] = selected_tab
 
     rows_key = f"{role}_rows"
-    if rows_key not in st.session_state:
+    if (
+        rows_key not in st.session_state
+        or st.session_state.get(f"{role}_rows_tab") != selected_tab
+    ):
         try:
             rows = sheets_io.read_values(sheet_id, selected_tab)
             st.session_state[rows_key] = rows
+            st.session_state[f"{role}_rows_tab"] = selected_tab
             st.success(f"🟢 מחובר · {len(rows)} שורות")
         except Exception as e:
             st.error(f"שגיאת קריאה: {e}")
@@ -302,10 +313,12 @@ def screen_step1() -> None:
                 detected = schema_reader.detect_objects(
                     input_rows, object_row=schema.object_row
                 )
-                existing_apis = {o.api_name for o in schema.objects}
-                for api in detected:
-                    if api not in existing_apis:
-                        schema.objects.append(ObjectDef(api_name=api, display_name=api))
+                # רשימת-האובייקטים משקפת את הלשונית הנוכחית (מחליפים — לא צוברים)
+                keep = {o.api_name: o for o in schema.objects}
+                schema.objects = [
+                    keep.get(api) or ObjectDef(api_name=api, display_name=api)
+                    for api in detected
+                ]
                 if detected:
                     st.caption(f"אובייקטים שזוהו: {' · '.join(detected)}")
 
@@ -330,6 +343,196 @@ def screen_step1() -> None:
         _screen_queries()
 
 
+# ─── step 2: mapping ──────────────────────────────────────────────────────────
+
+_SRC_TAG = {"file": "מהקובץ", "auto": "אוטומטי", "manual": "ידני", "": "—"}
+_OPT_NONE = "— בחר שדה —"
+_OPT_CONTROL = "🏳️ עמודת בקרה (דגל — לא נטענת כשדה)"
+_OPT_SKIP = "⚪ לא רלוונטי (לא נטענת)"
+
+
+def _field_dict_result():
+    """שורות מילון-השדות מהסשן → ParseResult (במטמון כל עוד השורות לא התחלפו)."""
+    rows = st.session_state.get("fielddict_rows")
+    if not rows:
+        return None
+    cached = st.session_state.get("_fd_cache")
+    if cached is not None and cached[0] is rows:
+        return cached[1]
+    result = field_dictionary.parse_field_dictionary(rows, schema.fielddict_objects)
+    st.session_state["_fd_cache"] = (rows, result)
+    return result
+
+
+def _map_fingerprint(columns, dictionary) -> tuple:
+    return (
+        tuple((c.index, c.object_api, c.label, c.proposed_api) for c in columns),
+        tuple(sorted((api, len(obj.fields)) for api, obj in dictionary.items())),
+    )
+
+
+def _ensure_mappings(columns, dictionary) -> None:
+    """מיפוי-אוטומטי פעם אחת; נבנה מחדש רק כשהכותרות או המילון משתנים."""
+    fp = _map_fingerprint(columns, dictionary)
+    if st.session_state.get("_map_fp") != fp:
+        schema.mappings = auto_mapper.build_mappings(columns, dictionary)
+        st.session_state["_map_fp"] = fp
+
+
+def _sample_value(input_rows: list[list[str]], col_index: int) -> str:
+    """הערך הלא-ריק הראשון בעמודה (לדוגמה החיה)."""
+    for row in input_rows[schema.data_start_row:]:
+        if col_index < len(row) and str(row[col_index] or "").strip():
+            return str(row[col_index]).strip()
+    return ""
+
+
+def _mapping_row(c, m, fields, datatypes, input_rows) -> None:
+    """שורת-מיפוי אחת: תווית · בורר-שדה · מקור · סטטוס · דוגמה."""
+    col_label, col_field, col_src, col_status, col_prev = st.columns([3, 4, 1.2, 1.6, 3])
+
+    col_label.markdown(f"**{c.label or '—'}**")
+    col_label.caption(f"עמ' {sheets_io.col_letter(c.index)}")
+
+    # אפשרויות: מיוחדות → מועמדים → שאר השדות (Label (api))
+    by_api = {f.api: f for f in fields}
+    ordered = [api for api in m.candidates if api in by_api]
+    ordered += [f.api for f in fields if f.api not in ordered]
+    labels = {api: f"{by_api[api].label} ({api})" for api in ordered}
+    if m.field_api and m.field_api not in labels:
+        labels[m.field_api] = f"{m.field_api} (לא במילון)"
+        ordered.append(m.field_api)
+    options = [_OPT_NONE, _OPT_CONTROL, _OPT_SKIP] + [labels[a] for a in ordered]
+
+    if m.role == ROLE_CONTROL:
+        current = _OPT_CONTROL
+    elif m.role == ROLE_SKIP:
+        current = _OPT_SKIP
+    elif m.field_api:
+        current = labels[m.field_api]
+    else:
+        current = _OPT_NONE
+
+    chosen = col_field.selectbox(
+        "שדה", options, index=options.index(current),
+        key=f"map_{c.index}", label_visibility="collapsed",
+    )
+    if chosen != current:
+        m.source = "manual"
+        if chosen == _OPT_CONTROL:
+            m.role, m.field_api, m.status = ROLE_CONTROL, "", ST_OK
+        elif chosen == _OPT_SKIP:
+            m.role, m.field_api, m.status = ROLE_SKIP, "", ST_OK
+        elif chosen == _OPT_NONE:
+            m.role, m.field_api, m.status = ROLE_FIELD, "", ST_CHECK
+        else:
+            m.role = ROLE_FIELD
+            m.field_api = next(a for a, lbl in labels.items() if lbl == chosen)
+            m.status = ST_OK
+        st.rerun()
+
+    col_src.caption(_SRC_TAG.get(m.source, "—"))
+
+    if m.role == ROLE_CONTROL:
+        col_status.markdown("🏳️ בקרה")
+    elif m.role == ROLE_SKIP:
+        col_status.markdown("⚪ לא רלוונטי")
+    elif m.status == ST_OK:
+        col_status.markdown("✅ תקין")
+    else:
+        col_status.markdown("🟡 בדוק התאמה")
+
+    sample = _sample_value(input_rows, c.index)
+    if sample and m.role == ROLE_FIELD and m.field_api:
+        after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), None)
+        if after:
+            col_prev.caption(f"{sample} → {after}")
+        else:
+            col_prev.caption(f"{sample} → ⚠️ לא זוהה")
+    elif sample:
+        col_prev.caption(sample)
+
+
+def screen_mapping() -> None:
+    """שלב 2 — מיפוי עמודות-הלקוח לשדות סיילספורס."""
+    input_rows = st.session_state.get("input_rows")
+    if not input_rows:
+        st.warning("חבר גיליון-קלט בשלב 1 תחילה.")
+        return
+    fd = _field_dict_result()
+    if fd is None:
+        st.warning("חבר את גיליון מילון-השדות בשלב 1 תחילה.")
+        return
+    for w in fd.warnings:
+        st.warning(w)
+    dictionary = fd.objects
+    if schema.table_type == "single" and not schema.single_object_api:
+        st.warning("בטבלת אובייקט-יחיד יש להזין שם אובייקט בשלב 1.")
+        return
+
+    columns = schema_reader.read_header_columns(input_rows, schema)
+    _ensure_mappings(columns, dictionary)
+
+    # סיכום-נוריות + סטטוס לסרגל
+    counts = {"ok": 0, "check": 0, "control": 0, "skip": 0}
+    for c in columns:
+        m = schema.mappings.get(c.index)
+        if m is None or not c.object_api or c.object_api not in dictionary:
+            continue
+        if m.role == ROLE_CONTROL:
+            counts["control"] += 1
+        elif m.role == ROLE_SKIP:
+            counts["skip"] += 1
+        elif m.status == ST_OK:
+            counts["ok"] += 1
+        else:
+            counts["check"] += 1
+    st.markdown(
+        f"✅ תקין ({counts['ok']}) · 🟡 בדוק התאמה ({counts['check']}) · "
+        f"🏳️ בקרה ({counts['control']}) · ⚪ לא רלוונטי ({counts['skip']})"
+    )
+    _set_status(2, "done" if counts["check"] == 0 else "pending")
+
+    obj_names: list[str] = []
+    for c in columns:
+        if c.object_api and c.object_api not in obj_names:
+            obj_names.append(c.object_api)
+    if not obj_names:
+        st.error("לא זוהו אובייקטים בשורת-האובייקט של הקלט.")
+        return
+
+    tab_titles = [o if o in dictionary else f"{o} ⚠️ חסר מילון" for o in obj_names]
+    for tab, obj in zip(st.tabs(tab_titles), obj_names):
+        with tab:
+            if obj not in dictionary:
+                st.warning(
+                    "האובייקט לא נמצא במילון-השדות — הוסף אותו לשאילתת המילון בשלב 1 והרץ שוב."
+                )
+            fields = mapper.candidates_for(obj, dictionary)
+            datatypes = {f.api: f.datatype for f in fields}
+            obj_cols = [c for c in columns if c.object_api == obj]
+
+            hdr = st.columns([3, 4, 1.2, 1.6, 3])
+            for hcol, title in zip(
+                hdr, ("עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס", "דוגמה → אחרי")
+            ):
+                hcol.markdown(f"**{title}**")
+            for c in obj_cols:
+                m = schema.mappings.get(c.index)
+                if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
+                    continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
+                _mapping_row(c, m, fields, datatypes, input_rows)
+
+    hidden = [
+        c for c in columns
+        if not c.object_api or (not c.label and not c.proposed_api)
+    ]
+    if hidden:
+        with st.expander(f"⚪ עמודות מוסתרות ({len(hidden)}) — מפרידים/ללא אובייקט"):
+            for c in hidden:
+                st.markdown(f"- **{sheets_io.col_letter(c.index)}** · {c.label or '*(ריק)*'}")
+
+
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
@@ -342,7 +545,7 @@ def main() -> None:
     if step == 1:
         screen_step1()
     elif step == 2:
-        screen_stub(2, "מיפוי")
+        screen_mapping()
     elif step == 3:
         screen_stub(3, "מנגנוני זיהוי")
     elif step == 4:
