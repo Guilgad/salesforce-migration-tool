@@ -65,3 +65,52 @@ def test_schema_db_tabs_default_empty_dict():
 def test_single_object_api_field():
     s = RuntimeSchema(table_type="single", single_object_api="Lead")
     assert s.single_object_api == "Lead"
+
+
+from config.runtime_schema import (
+    ColumnMapping, ExtraField, ValueMap, ValueMapEntry,
+    ROLE_FIELD, ROLE_CONTROL, ROLE_SKIP, ST_OK, ST_CHECK,
+)
+
+
+def test_column_mapping_defaults():
+    m = ColumnMapping(col_index=3)
+    assert m.role == ROLE_FIELD
+    assert m.status == ST_CHECK
+    assert m.source == ""
+    assert m.field_api == ""
+    assert m.instance == 1
+    assert m.candidates == []
+
+
+def test_value_map_apply_found():
+    vm = ValueMap(entries=[ValueMapEntry("חברתי", "012A", "חברתי")])
+    assert vm.apply("חברתי") == ("012A", True)
+
+
+def test_value_map_apply_strips_input():
+    vm = ValueMap(entries=[ValueMapEntry("חברתי", "012A")])
+    assert vm.apply("  חברתי ") == ("012A", True)
+
+
+def test_value_map_apply_not_found_with_default():
+    vm = ValueMap(entries=[ValueMapEntry("א", "1")], default="0")
+    assert vm.apply("ב") == ("0", False)
+
+
+def test_value_map_apply_not_found_no_default():
+    vm = ValueMap(entries=[ValueMapEntry("א", "1")])
+    assert vm.apply("ב") == ("", False)
+
+
+def test_extra_field():
+    x = ExtraField(object_api="Contact", field_api="LeadSource", constant_value="Web")
+    assert x.constant_value == "Web"
+
+
+def test_schema_mapping_fields_default_empty():
+    s = RuntimeSchema()
+    assert s.mappings == {}
+    assert s.value_maps == {}
+    assert s.extra_fields == []
+    assert s.multi_instance == {}

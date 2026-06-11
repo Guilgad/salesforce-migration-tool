@@ -9,6 +9,59 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# ── step-2 mapping: roles & statuses ──────────────────────────────────────────
+ROLE_FIELD = "field"      # עמודה רגילה — נטענת כשדה
+ROLE_CONTROL = "control"  # עמודת-בקרה (דגל) — נצרכת ע"י קשרים/junction, לא נטענת
+ROLE_SKIP = "skip"        # לא רלוונטי — לא נטענת
+
+ST_OK = "ok"              # תקין (אוטומטי/ידני/מהקובץ)
+ST_CHECK = "check"        # בדוק התאמה — ממתין לאישור המשתמש
+
+
+@dataclass
+class ValueMapEntry:
+    """שורה אחת במפת-ערכים: ערך-מקור → ערך-יעד (נטען) + שם לתצוגה."""
+    source: str
+    target: str
+    display: str = ""
+
+
+@dataclass
+class ValueMap:
+    """מפת-ערכים לעמודה (תרגום פיקליסט ידני). default ריק = ערך-לא-ממופה יסומן כבעיה."""
+    entries: list[ValueMapEntry] = field(default_factory=list)
+    default: str = ""
+
+    def apply(self, raw: str) -> tuple[str, bool]:
+        """(ערך-מתורגם, נמצא?). לא-נמצא → (default, False)."""
+        key = (raw or "").strip()
+        for e in self.entries:
+            if e.source == key:
+                return e.target, True
+        return self.default, False
+
+
+@dataclass
+class ColumnMapping:
+    """החלטת-מיפוי לעמודת-קלט אחת (לפי אינדקס עמודה)."""
+    col_index: int
+    object_api: str = ""
+    field_api: str = ""
+    role: str = ROLE_FIELD            # ROLE_FIELD | ROLE_CONTROL | ROLE_SKIP
+    source: str = ""                  # "file" | "auto" | "manual" | ""
+    status: str = ST_CHECK            # ST_OK | ST_CHECK (רלוונטי רק ל-ROLE_FIELD)
+    instance: int = 1                 # מופע בשורה (1 = רגיל); ראה multi_instance
+    candidates: list[str] = field(default_factory=list)  # מועמדים ל"בדוק התאמה"
+
+
+@dataclass
+class ExtraField:
+    """שדה-יעד ללא עמודת-מקור — ערך קבוע לכל הרשומות (למשל LeadSource)."""
+    object_api: str
+    field_api: str
+    constant_value: str = ""
+
+
 @dataclass
 class ObjectDef:
     """Salesforce object to be loaded, as discovered at runtime."""
@@ -46,3 +99,9 @@ class RuntimeSchema:
 
     # ── Derived from input sheet (populated by schema_reader) ────────────────
     objects: list[ObjectDef] = field(default_factory=list)
+
+    # ── Step-2 mapping state ──────────────────────────────────────────────────
+    mappings: dict[int, ColumnMapping] = field(default_factory=dict)   # {col_index: …}
+    value_maps: dict[int, ValueMap] = field(default_factory=dict)      # {col_index: …}
+    extra_fields: list[ExtraField] = field(default_factory=list)
+    multi_instance: dict[str, bool] = field(default_factory=dict)      # {object_api: shown?}
