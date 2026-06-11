@@ -101,9 +101,188 @@ def _topbar() -> None:
 
 # ─── screens ──────────────────────────────────────────────────────────────────
 
+
+def _screen_queries() -> None:
+    """Stub — implemented in Task 5."""
+    st.info("שאילתות — בפרוסה Task 5")
+
+
+def _parse_sheet_id(raw: str) -> str:
+    """Extract Google Sheets ID from URL or return as-is if it looks like an ID."""
+    if not raw:
+        return ""
+    import re
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", raw)
+    if m:
+        return m.group(1)
+    if "/" not in raw and len(raw) > 20:
+        return raw
+    return raw
+
+
+def _sheet_connector(
+    role: str,
+    label: str,
+    *,
+    needs_write: bool = False,
+) -> tuple[str, str, list[list[str]] | None]:
+    """
+    Renders a sheet connector widget (URL input + tab selector).
+    Returns (sheet_id, selected_tab, rows_or_None).
+    Persists sheet_id and tab choice to session state under keys:
+      f"{role}_sheet_id", f"{role}_tab".
+    """
+    sid_key = f"{role}_sheet_id"
+    tab_key = f"{role}_tab"
+
+    st.markdown(f"**{label}**" + (" ✍️" if needs_write else ""))
+    col_url, col_btn = st.columns([5, 1])
+
+    raw_url = col_url.text_input(
+        "קישור / מזהה גיליון",
+        value=st.session_state.get(sid_key, ""),
+        key=f"{role}_url_input",
+        label_visibility="collapsed",
+        placeholder="הדבק URL של Google Sheets...",
+    )
+    sheet_id = _parse_sheet_id(raw_url.strip())
+
+    if col_btn.button("🔄", key=f"{role}_refresh"):
+        for k in [f"{role}_tabs", f"{role}_rows"]:
+            st.session_state.pop(k, None)
+
+    if not sheet_id:
+        return "", "", None
+
+    st.session_state[sid_key] = sheet_id
+
+    if f"{role}_tabs" not in st.session_state:
+        try:
+            tabs = sheets_io.list_tabs(sheet_id)
+            st.session_state[f"{role}_tabs"] = tabs
+            recent_sheets.save_recent(role, sheet_id)
+        except Exception as e:
+            st.error(f"שגיאה בחיבור: {e}")
+            return sheet_id, "", None
+    else:
+        tabs = st.session_state[f"{role}_tabs"]
+
+    if not tabs:
+        st.warning("הגיליון ריק מלשוניות.")
+        return sheet_id, "", None
+
+    default_tab = st.session_state.get(tab_key, tabs[0])
+    selected_tab = st.selectbox(
+        "לשונית",
+        tabs,
+        index=tabs.index(default_tab) if default_tab in tabs else 0,
+        key=f"{role}_tab_select",
+    )
+    st.session_state[tab_key] = selected_tab
+
+    rows_key = f"{role}_rows"
+    if rows_key not in st.session_state:
+        try:
+            rows = sheets_io.read_sheet(sheet_id, selected_tab)
+            st.session_state[rows_key] = rows
+            st.success(f"🟢 מחובר · {len(rows)} שורות")
+        except Exception as e:
+            st.error(f"שגיאת קריאה: {e}")
+            return sheet_id, selected_tab, None
+    else:
+        rows = st.session_state[rows_key]
+        st.success(f"🟢 מחובר · {len(rows)} שורות")
+
+    return sheet_id, selected_tab, rows
+
+
+def _db_freshness_label(sheet_id: str) -> str:
+    """Returns a freshness string like '⚠️ עודכן לפני 8 ימים' or '🟢 עודכן היום'."""
+    if not sheet_id:
+        return ""
+    try:
+        meta = sheets_io.get_spreadsheet_meta(sheet_id)
+        from datetime import datetime, timezone
+        modified = meta.get("modifiedTime", "")
+        if modified:
+            dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+            days = (datetime.now(timezone.utc) - dt).days
+            if days == 0:
+                return "🟢 עודכן היום"
+            elif days <= 3:
+                return f"🟡 עודכן לפני {days} ימים"
+            else:
+                return f"⚠️ עודכן לפני {days} ימים — מומלץ לרענן"
+    except Exception:
+        pass
+    return ""
+
+
 def screen_step1() -> None:
-    """Step 1: Connection + Queries — implemented in Task 4+5."""
-    st.info("שלב 1 — בפרוסה הבאה (Task 4–5)")
+    """Step 1: Connect 3 sheets + queries."""
+    col_connect, col_queries = st.columns([1, 1], gap="large")
+
+    with col_connect:
+        st.subheader("חיבור גיליונות")
+
+        st.markdown("---")
+        st.markdown("#### 📄 גיליון קלט")
+        input_id, input_tab, input_rows = _sheet_connector(
+            "input", "גיליון הנתונים של הלקוח", needs_write=False
+        )
+
+        if input_rows:
+            tt = st.radio(
+                "סוג הטבלה",
+                ["טבלה מרובת אובייקטים", "טבלת אובייקט יחיד"],
+                index=0 if schema.table_type == "multi" else 1,
+                horizontal=True,
+                key="table_type_radio",
+            )
+            schema.table_type = "multi" if tt.startswith("טבלה מרו") else "single"
+
+            if schema.table_type == "single":
+                single_obj = st.text_input(
+                    "שם אובייקט SF (API)",
+                    value=schema.single_object_api,
+                    key="single_obj_input",
+                    placeholder="לדוגמה: Contact",
+                )
+                schema.single_object_api = single_obj.strip()
+
+            schema.input_sheet_id = input_id
+            schema.input_tab = input_tab
+
+            if schema.table_type == "multi":
+                detected = schema_reader.detect_objects(
+                    input_rows, object_row=schema.object_row
+                )
+                existing_apis = {o.api_name for o in schema.objects}
+                for api in detected:
+                    if api not in existing_apis:
+                        schema.objects.append(ObjectDef(api_name=api, display_name=api))
+                if detected:
+                    st.caption(f"אובייקטים שזוהו: {' · '.join(detected)}")
+
+        st.markdown("---")
+        st.markdown("#### 📚 מילון שדות (FieldDefinition)")
+        fd_id, fd_tab, _ = _sheet_connector("fielddict", "גיליון תוצאות שאילתת FieldDefinition")
+        if fd_id:
+            schema.fielddict_sheet_id = fd_id
+            schema.fielddict_tab = fd_tab
+
+        st.markdown("---")
+        st.markdown("#### 🗄️ ייצוא DB")
+        db_id, _, _ = _sheet_connector("db", "גיליון ייצוא הנתונים הקיימים מ-Salesforce")
+        if db_id:
+            schema.db_sheet_id = db_id
+            freshness = _db_freshness_label(db_id)
+            if freshness:
+                st.caption(freshness)
+
+    with col_queries:
+        st.subheader("שאילתות ל-Inspector")
+        _screen_queries()
 
 
 def screen_stub(step: int, label: str) -> None:
