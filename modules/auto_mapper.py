@@ -65,3 +65,50 @@ def suggest_field(label: str, fields: list[FieldInfo]) -> Suggestion:
     ):
         return Suggestion(scored[0][1], True, candidates)
     return Suggestion("", False, candidates)
+
+
+def build_mappings(
+    columns: list[mapper.TemplateColumn],
+    dictionary: dict,
+) -> dict[int, ColumnMapping]:
+    """
+    בונה ColumnMapping לכל עמודה (קלט: עמודות מ-schema_reader + מילון field_dictionary).
+
+    - עמודת-מפריד (בלי תווית ובלי API) או בלי אובייקט → role=skip.
+    - API מהקובץ ותקין (במילון או ב-KNOWN_STANDARD_FIELDS) → ok / "מהקובץ".
+    - API מהקובץ ולא-תקין → check / "מהקובץ" + מועמדים לפי התווית.
+    - API ריק → מיפוי-אוטומטי לפי התווית: בטוח → ok/auto · עמום → check + מועמדים.
+    - אובייקט שאינו במילון → check בלי מועמדים (ה-UI מסמן את הטאב "חסר מילון").
+    """
+    result: dict[int, ColumnMapping] = {}
+    for c in columns:
+        m = ColumnMapping(col_index=c.index, object_api=c.object_api)
+        clean = mapper.normalize_api(c.proposed_api)
+        if c.ignored or not c.object_api or (not c.label and not clean):
+            m.role = ROLE_SKIP
+            result[c.index] = m
+            continue
+
+        obj = dictionary.get(c.object_api)
+        fields = list(obj.fields) if obj else []
+        valid_apis = {f.api for f in fields} | mapper.KNOWN_STANDARD_FIELDS.get(
+            c.object_api, set()
+        )
+        if clean:
+            m.field_api = clean
+            m.source = "file"
+            if clean in valid_apis:
+                m.status = ST_OK
+            else:
+                m.status = ST_CHECK
+                m.candidates = suggest_field(c.label, fields).candidates
+        else:
+            s = suggest_field(c.label, fields)
+            if s.confident:
+                m.field_api, m.source, m.status = s.field_api, "auto", ST_OK
+            else:
+                m.source = "auto" if s.candidates else ""
+                m.status = ST_CHECK
+                m.candidates = s.candidates
+        result[c.index] = m
+    return result
