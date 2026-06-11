@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from config.runtime_schema import RuntimeSchema, ObjectDef
-from modules import (
+from config.runtime_schema import RuntimeSchema, ObjectDef  # noqa: F401 — ObjectDef used in Task 4
+from modules import (  # noqa: F401 — all used in Tasks 4–7
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
     schema_reader, validator, notes_store,
 )
@@ -88,8 +88,7 @@ def _topbar() -> None:
     for col, (num, label) in zip(cols, STEPS):
         status = _get_status(num)
         css_class = "current" if num == current else status
-        card_class = _CARD_COLORS[css_class]
-        icon = _status_icon("current" if num == current else status)
+        icon = _status_icon(css_class)
         if col.button(
             f"{icon} {num}. {label}",
             key=f"nav_{num}",
