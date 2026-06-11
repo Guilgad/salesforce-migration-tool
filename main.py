@@ -228,7 +228,7 @@ def _sheet_connector(
     rows_key = f"{role}_rows"
     if rows_key not in st.session_state:
         try:
-            rows = sheets_io.read_sheet(sheet_id, selected_tab)
+            rows = sheets_io.read_values(sheet_id, selected_tab)
             st.session_state[rows_key] = rows
             st.success(f"🟢 מחובר · {len(rows)} שורות")
         except Exception as e:

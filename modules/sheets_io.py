@@ -78,6 +78,24 @@ def read_values(link_or_id: str, tab: str | None = None) -> list[list[str]]:
     return resp.get("values", [])
 
 
+def list_tabs(link_or_id: str) -> list[str]:
+    """שמות כל הלשוניות בגיליון, לפי סדרן."""
+    sid = extract_id(link_or_id)
+    meta = (
+        _sheets()
+        .spreadsheets()
+        .get(spreadsheetId=sid, fields="sheets.properties.title")
+        .execute()
+    )
+    return [s["properties"]["title"] for s in meta.get("sheets", [])]
+
+
+def get_spreadsheet_meta(link_or_id: str) -> dict:
+    """מטא-דאטה מ-Drive: name + modifiedTime (לחיווי עדכניות ה-DB)."""
+    sid = extract_id(link_or_id)
+    return _drive().files().get(fileId=sid, fields="name,modifiedTime").execute()
+
+
 def rows_to_dicts(rows: list[list[str]]) -> list[dict]:
     """
     ממיר גריד (שורה ראשונה = כותרת) לרשימת מילונים {כותרת: ערך}.
