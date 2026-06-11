@@ -7,7 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config.runtime_schema import (
-    RuntimeSchema, ObjectDef, ExtraField, ValueMap, ValueMapEntry,
+    RuntimeSchema, ObjectDef, ExtraField, IdentityConfig, ValueMap, ValueMapEntry,
     ROLE_FIELD, ROLE_CONTROL, ROLE_SKIP, ST_OK, ST_CHECK,
 )
 from modules import (  # noqa: F401 — validator/notes_store used in later slices
@@ -679,6 +679,113 @@ def screen_mapping() -> None:
                 st.error(f"כשל בכתיבה לקובץ-המקור: {e}")
 
 
+# ─── step 3: identity ─────────────────────────────────────────────────────────
+
+_N_MECHANISMS = 5
+
+
+def screen_identity() -> None:
+    """שלב 3 — מנגנוני-זיהוי מדורגים פר-אובייקט + טוגל-dedup + הוסף-אובייקט."""
+    fd = _field_dict_result()
+    dictionary = fd.objects if fd else {}
+    loaded = [o.api_name for o in schema.objects]
+    if (
+        schema.table_type == "single"
+        and schema.single_object_api
+        and schema.single_object_api not in loaded
+    ):
+        loaded = [schema.single_object_api]
+    if not loaded and not schema.extra_objects:
+        st.warning("חבר גיליון-קלט בשלב 1 ומפה שדות בשלב 2 תחילה.")
+        return
+
+    # מאגר-שדות פר-אובייקט: נטען — שדות ממופים משלב 2; זיהוי-בלבד — כל שדות-המילון
+    pools: dict[str, list[str]] = {}
+    for obj in loaded:
+        pool: list[str] = []
+        for m in sorted(schema.mappings.values(), key=lambda x: x.col_index):
+            if (
+                m.object_api == obj and m.role == ROLE_FIELD
+                and m.field_api and m.field_api not in pool
+            ):
+                pool.append(m.field_api)
+        pools[obj] = pool
+    for obj in schema.extra_objects:
+        pools[obj] = [f.api for f in dictionary[obj].fields] if obj in dictionary else []
+
+    all_objs = loaded + [o for o in schema.extra_objects if o not in loaded]
+    st.caption(
+        "לכל אובייקט: מנגנונים מדורגים לפי עדיפות — כל מנגנון הוא צירוף-שדות (AND). "
+        "אותם מנגנונים משמשים גם לזיהוי מול ה-DB וגם ליישוב Lookups."
+    )
+
+    done_all = bool(loaded)
+    tabs = st.tabs([o if o in loaded else f"{o} 🔍" for o in all_objs])
+    for tab, obj in zip(tabs, all_objs):
+        with tab:
+            cfg = schema.identity.setdefault(obj, IdentityConfig())
+            if obj not in loaded:
+                st.caption("🔍 זיהוי בלבד — האובייקט לא נטען; משמש ליישוב Lookups.")
+            pool = pools.get(obj, [])
+            if not pool:
+                st.info(
+                    "אין שדות זמינים — מפה שדות לאובייקט זה בשלב 2."
+                    if obj in loaded else "האובייקט חסר במילון-השדות (שלב 1)."
+                )
+            cfg.dedup_internal = st.toggle(
+                "זיהוי כפילויות פנימיות (איחוד שורות-קלט שחולקות מנגנון)",
+                value=cfg.dedup_internal,
+                key=f"dedup_{obj}",
+                help="כבוי = כל שורה נטענת בנפרד, שום רשומה לא נעלמת.",
+            )
+            if not cfg.mechanisms:
+                cfg.mechanisms.append([])
+            n = len(cfg.mechanisms)   # חלק מהמפתח — מחיקה/הוספה מזריעות widgets מחדש
+            del_idx = None
+            for i, mech in enumerate(cfg.mechanisms):
+                c1, c2 = st.columns([8, 1])
+                cfg.mechanisms[i] = c1.multiselect(
+                    f"מנגנון {i + 1} — צירוף שדות (AND)",
+                    options=pool,
+                    default=[f for f in mech if f in pool],
+                    key=f"mech_{obj}_{n}_{i}",
+                )
+                if n > 1 and c2.button("🗑️", key=f"mech_del_{obj}_{i}"):
+                    del_idx = i
+            if del_idx is not None:
+                cfg.mechanisms.pop(del_idx)
+                st.rerun()
+            if n < _N_MECHANISMS and st.button("➕ הוסף מנגנון", key=f"mech_add_{obj}"):
+                cfg.mechanisms.append([])
+                st.rerun()
+            active = [m for m in cfg.mechanisms if m]
+            if active:
+                st.caption("סדר-עדיפות: " + " ← ".join("+".join(m) for m in active))
+            elif obj in loaded:
+                st.caption("ללא מנגנון — כל השורות ייטענו כחדשות (Insert), ללא הצלבה מול ה-DB.")
+            if obj in loaded and not active:
+                done_all = False
+
+    with st.expander("➕ הוסף אובייקט (זיהוי בלבד — יעד Lookup שלא נטען)"):
+        avail = [o for o in dictionary if o not in all_objs]
+        if avail:
+            pick = st.selectbox("אובייקט מהמילון", avail, key="extra_obj_pick")
+            if st.button("הוסף", key="extra_obj_add"):
+                schema.extra_objects.append(pick)
+                st.rerun()
+        else:
+            st.caption("אין אובייקטים נוספים במילון-השדות.")
+        for i, o in enumerate(schema.extra_objects):
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(f"🔍 {o}")
+            if c2.button("🗑️", key=f"extra_obj_del_{i}"):
+                schema.extra_objects.pop(i)
+                schema.identity.pop(o, None)
+                st.rerun()
+
+    _set_status(3, "done" if done_all else "pending")
+
+
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
@@ -693,7 +800,7 @@ def main() -> None:
     elif step == 2:
         screen_mapping()
     elif step == 3:
-        screen_stub(3, "מנגנוני זיהוי")
+        screen_identity()
     elif step == 4:
         screen_stub(4, "קשרים ו-Lookups")
     elif step == 5:
