@@ -4,7 +4,6 @@ Test schema_reader — detect_objects and read_header_columns.
 import pytest
 from config.runtime_schema import RuntimeSchema
 from modules.schema_reader import detect_objects, read_header_columns
-from modules.mapper import STATUS_VALID
 
 # ─── shared fixture ──────────────────────────────────────────────────────────
 _ROWS_MULTI = [
