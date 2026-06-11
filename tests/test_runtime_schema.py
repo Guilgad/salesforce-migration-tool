@@ -114,3 +114,24 @@ def test_schema_mapping_fields_default_empty():
     assert s.value_maps == {}
     assert s.extra_fields == []
     assert s.multi_instance == {}
+
+
+from config.runtime_schema import IdentityConfig
+
+
+def test_identity_config_defaults():
+    cfg = IdentityConfig()
+    assert cfg.mechanisms == []
+    assert cfg.dedup_internal is False  # ברירת-מחדל כבוי — שום רשומה לא נעלמת
+
+
+def test_identity_config_stores_ranked_mechanisms():
+    cfg = IdentityConfig(mechanisms=[["ID_Number__c"], ["LastName", "Email"]])
+    assert cfg.mechanisms[0] == ["ID_Number__c"]
+    assert cfg.mechanisms[1] == ["LastName", "Email"]
+
+
+def test_schema_identity_fields_default_empty():
+    s = RuntimeSchema()
+    assert s.identity == {}
+    assert s.extra_objects == []

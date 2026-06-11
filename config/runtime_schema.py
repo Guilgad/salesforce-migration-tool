@@ -55,6 +55,13 @@ class ColumnMapping:
 
 
 @dataclass
+class IdentityConfig:
+    """מנגנוני-זיהוי לאובייקט אחד (שלב 3): מדורגים לפי עדיפות, כל מנגנון = צירוף AND."""
+    mechanisms: list[list[str]] = field(default_factory=list)
+    dedup_internal: bool = False   # זיהוי כפילויות פנימיות — כבוי כברירת-מחדל
+
+
+@dataclass
 class ExtraField:
     """שדה-יעד ללא עמודת-מקור — ערך קבוע לכל הרשומות (למשל LeadSource)."""
     object_api: str
@@ -105,3 +112,7 @@ class RuntimeSchema:
     value_maps: dict[int, ValueMap] = field(default_factory=dict)      # {col_index: …}
     extra_fields: list[ExtraField] = field(default_factory=list)
     multi_instance: dict[str, bool] = field(default_factory=dict)      # {object_api: shown?}
+
+    # ── Step-3 identity state ─────────────────────────────────────────────────
+    identity: dict[str, IdentityConfig] = field(default_factory=dict)  # {object_api: …}
+    extra_objects: list[str] = field(default_factory=list)             # זיהוי-בלבד (לא נטענים)
