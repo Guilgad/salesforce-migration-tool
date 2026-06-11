@@ -387,9 +387,28 @@ def _sample_value(input_rows: list[list[str]], col_index: int) -> str:
     return ""
 
 
+def _distinct_values(input_rows: list[list[str]], col_index: int, limit: int = 20) -> list[str]:
+    """ערכים ייחודיים (לא-ריקים) בעמודת-דאטה — זריעת מפת-הערכים."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in input_rows[schema.data_start_row:]:
+        v = (
+            str(row[col_index]).strip()
+            if col_index < len(row) and row[col_index] is not None else ""
+        )
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+            if len(out) >= limit:
+                break
+    return out
+
+
 def _mapping_row(c, m, fields, datatypes, input_rows) -> None:
     """שורת-מיפוי אחת: תווית · בורר-שדה · מקור · סטטוס · דוגמה."""
-    col_label, col_field, col_src, col_status, col_prev = st.columns([3, 4, 1.2, 1.6, 3])
+    col_label, col_field, col_src, col_status, col_prev, col_vm = st.columns(
+        [3, 4, 1.2, 1.6, 3, 1]
+    )
 
     col_label.markdown(f"**{c.label or '—'}**")
     col_label.caption(f"עמ' {sheets_io.col_letter(c.index)}")
@@ -442,15 +461,60 @@ def _mapping_row(c, m, fields, datatypes, input_rows) -> None:
     else:
         col_status.markdown("🟡 בדוק התאמה")
 
+    vm = schema.value_maps.get(c.index)
     sample = _sample_value(input_rows, c.index)
     if sample and m.role == ROLE_FIELD and m.field_api:
-        after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), None)
+        after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), vm)
         if after:
-            col_prev.caption(f"{sample} → {after}")
+            shown = after
+            if vm:
+                entry = next((e for e in vm.entries if e.source == sample), None)
+                if entry and entry.display:
+                    shown = f"{after} ({entry.display})"
+            col_prev.caption(f"{sample} → {shown}")
         else:
             col_prev.caption(f"{sample} → ⚠️ לא זוהה")
     elif sample:
         col_prev.caption(sample)
+
+    # מפת-ערכים — חלונית-צפה במקום
+    if m.role == ROLE_FIELD:
+        with col_vm.popover("🗺️✓" if vm and vm.entries else "🗺️"):
+            st.markdown(f"**מפת-ערכים — {c.label}**")
+            st.caption("ערך-מקור → ערך-יעד (נטען) → שם (תצוגה בלבד). התאמה מדויקת.")
+            seed = (
+                [{"מקור": e.source, "יעד (נטען)": e.target, "שם (תצוגה)": e.display}
+                 for e in vm.entries]
+                if vm and vm.entries
+                else [{"מקור": v, "יעד (נטען)": "", "שם (תצוגה)": ""}
+                      for v in _distinct_values(input_rows, c.index)]
+            )
+            edited = st.data_editor(
+                seed, num_rows="dynamic", key=f"vm_edit_{c.index}",
+                use_container_width=True,
+            )
+            default = st.text_input(
+                "ערך ברירת-מחדל (ריק = ערך-לא-ממופה יסומן כבעיה)",
+                value=vm.default if vm else "",
+                key=f"vm_def_{c.index}",
+            )
+            b1, b2 = st.columns(2)
+            if b1.button("שמור מפה", key=f"vm_save_{c.index}"):
+                entries = [
+                    ValueMapEntry(
+                        str(r.get("מקור", "")).strip(),
+                        str(r.get("יעד (נטען)", "")).strip(),
+                        str(r.get("שם (תצוגה)", "")).strip(),
+                    )
+                    for r in edited if str(r.get("מקור", "")).strip()
+                ]
+                schema.value_maps[c.index] = ValueMap(
+                    entries=entries, default=default.strip()
+                )
+                st.rerun()
+            if vm and vm.entries and b2.button("הסר מפה", key=f"vm_del_{c.index}"):
+                schema.value_maps.pop(c.index, None)
+                st.rerun()
 
 
 def screen_mapping() -> None:
@@ -512,9 +576,10 @@ def screen_mapping() -> None:
             datatypes = {f.api: f.datatype for f in fields}
             obj_cols = [c for c in columns if c.object_api == obj]
 
-            hdr = st.columns([3, 4, 1.2, 1.6, 3])
+            hdr = st.columns([3, 4, 1.2, 1.6, 3, 1])
             for hcol, title in zip(
-                hdr, ("עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס", "דוגמה → אחרי")
+                hdr,
+                ("עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס", "דוגמה → אחרי", "מפה"),
             ):
                 hcol.markdown(f"**{title}**")
             for c in obj_cols:
