@@ -112,3 +112,26 @@ def build_mappings(
                 m.candidates = s.candidates
         result[c.index] = m
     return result
+
+
+def preview_value(
+    raw: str,
+    datatype: str = "",
+    value_map: ValueMap | None = None,
+) -> str | None:
+    """
+    ערך-"אחרי" לתצוגה-מקדימה חיה: מפת-ערכים → תרגום; Date → ISO; Checkbox → TRUE/FALSE.
+    מחזיר None אם הערך לא ניתן-לפירוש (ה-UI יציג ⚠️). ריק → "".
+    """
+    text = formatter.normalize_text(raw)
+    if not text:
+        return ""
+    if value_map is not None and value_map.entries:
+        target, found = value_map.apply(text)
+        return target if (found or value_map.default) else None
+    dt = (datatype or "").lower()
+    if dt.startswith("date"):
+        return formatter.parse_date(text)
+    if dt.startswith("checkbox"):
+        return formatter.parse_bool(text)
+    return text

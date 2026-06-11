@@ -156,3 +156,42 @@ def test_object_missing_from_dict_is_check_no_candidates():
     cols = [_col(0, "Lead", "שם", "LastName")]
     m = build_mappings(cols, _dict())[0]
     assert (m.status, m.candidates) == (ST_CHECK, [])
+
+
+from config.runtime_schema import ValueMap, ValueMapEntry
+from modules.auto_mapper import preview_value
+
+
+def test_preview_date():
+    assert preview_value("15/03/2024", "Date") == "2024-03-15"
+
+
+def test_preview_bad_date_is_none():
+    assert preview_value("מחר", "Date") is None
+
+
+def test_preview_checkbox():
+    assert preview_value("כן", "Checkbox") == "TRUE"
+
+
+def test_preview_value_map_found():
+    vm = ValueMap(entries=[ValueMapEntry("חברתי", "012A", "חברתי")])
+    assert preview_value("חברתי", "Text", vm) == "012A"
+
+
+def test_preview_value_map_not_found_with_default():
+    vm = ValueMap(entries=[ValueMapEntry("א", "1")], default="0")
+    assert preview_value("ב", "Text", vm) == "0"
+
+
+def test_preview_value_map_not_found_no_default_is_none():
+    vm = ValueMap(entries=[ValueMapEntry("א", "1")])
+    assert preview_value("ב", "Text", vm) is None
+
+
+def test_preview_plain_text_passthrough():
+    assert preview_value(" יוסי ", "Text") == "יוסי"
+
+
+def test_preview_empty_is_empty():
+    assert preview_value("", "Date") == ""
