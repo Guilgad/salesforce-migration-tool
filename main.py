@@ -14,6 +14,11 @@ from modules import (  # noqa: F401 — validator/notes_store used in later slic
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
     schema_reader, auto_mapper, validator, notes_store,
 )
+from modules.orchestrator import (
+    adapt_columns, apply_value_maps, apply_extra_fields,
+    convert_id_15_to_18, read_ids_from_output_tab,
+    OUTPUT_TAB, OUTPUT_TAB_MANUAL,
+)
 
 st.set_page_config(
     page_title="כלי מיגרציה לסיילספורס v2",
@@ -1030,6 +1035,199 @@ def screen_lookups() -> None:
     _set_status(4, "done" if True else "pending")
 
 
+# ─── step 5: build & output ───────────────────────────────────────────────────
+
+
+def _cached_read(sheet_id: str, tab: str) -> list:
+    """Session-state cached wrapper for sheets_io.read_values."""
+    cache_key = f"_read_cache_{sheet_id}_{tab}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = sheets_io.read_values(sheet_id, tab)
+    return st.session_state[cache_key]
+
+
+def _clear_read_cache() -> None:
+    """Invalidate all _cached_read entries after a write."""
+    for k in list(st.session_state.keys()):
+        if k.startswith("_read_cache_"):
+            del st.session_state[k]
+
+
+def _render_junction_card(schema, jc, obj_labels: dict) -> None:
+    st.info(f"Junction {jc.junction_object} — ממתין למימוש (Task 10)")
+
+
+def _render_manual_panel(schema, obj: str, build_result) -> None:
+    pass  # Task 8
+
+
+def _render_unkeyed_panel(schema, obj: str, build_result) -> None:
+    pass  # Task 9
+
+
+def _render_paste_back(schema, obj: str) -> None:
+    pass  # Task 11
+
+
+def _apply_id_conversion_to_grid(grid: list) -> list:
+    """Convert any 15-char alphanumeric cell values to 18-char Salesforce Ids."""
+    result = []
+    for row in grid:
+        result.append([
+            convert_id_15_to_18(cell)
+            if isinstance(cell, str) and len(cell) == 15 and cell.isalnum()
+            else cell
+            for cell in row
+        ])
+    return result
+
+
+def _run_build_pipeline(schema: "RuntimeSchema", obj: str) -> None:
+    from modules.splitter import split_object
+    from modules.dedup_engine import deduplicate
+    from modules.output_writer import build_contacts_grid, build_manual_grid
+
+    with st.spinner(f"בונה {obj}…"):
+        rows = _cached_read(schema.input_sheet_id, schema.input_tab)
+        columns = adapt_columns(schema, obj, rows)
+        records = split_object(obj, rows, columns, data_start_row=schema.data_start_row)
+        records = apply_value_maps(records, schema)
+        records = apply_extra_fields(records, schema, obj)
+
+        # Convert SplitRecord list → list[dict] for dedup engine
+        record_dicts = [r.values for r in records]
+        source_rows = [r.source_row for r in records]
+
+        db_tab = schema.db_tabs.get(obj, "")
+        db_rows = _cached_read(schema.db_sheet_id, db_tab) if db_tab else []
+        db_recs = sheets_io.rows_to_dicts(db_rows)
+        # Build {Id: dict} index required by output_writer
+        db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
+
+        id_cfg = schema.identity.get(obj, IdentityConfig())
+        mechanisms = id_cfg.mechanisms or []
+
+        result = deduplicate(
+            record_dicts, mechanisms, db_recs,
+            digits_only_fields=schema.digits_only_fields,
+            local_key_prefix=obj[:1].upper(),
+            dedup_internal=id_cfg.dedup_internal,
+        )
+
+        grid, cell_colors = build_contacts_grid(
+            result, record_dicts, columns, db_by_id,
+            object_api=obj,
+        )
+        grid = _apply_id_conversion_to_grid(grid)
+
+        gsheet = schema.input_sheet_id
+        sheets_io.ensure_tab(gsheet, OUTPUT_TAB(obj))
+        sheets_io.write_grid(gsheet, OUTPUT_TAB(obj), grid)
+
+        if result.counts.get("ambiguous", 0) or result.counts.get("unkeyed", 0):
+            manual_grid, manual_colors = build_manual_grid(
+                result, record_dicts, columns, db_by_id, source_rows,
+                object_api=obj,
+            )
+            sheets_io.ensure_tab(gsheet, OUTPUT_TAB_MANUAL(obj))
+            sheets_io.write_grid(gsheet, OUTPUT_TAB_MANUAL(obj), manual_grid)
+
+        st.session_state[f"build_{obj}"] = result
+        _clear_read_cache()
+
+        # Validate output grid (dates + Id lengths)
+        from modules.validator import validate_output_grid
+        field_dict = st.session_state.get("field_dict", {})
+        issues, _marks = validate_output_grid(grid, obj, field_dict)
+        st.session_state[f"validate_{obj}"] = issues
+        st.session_state[f"loaded_{obj}"] = True
+
+    st.success(f"✅ {obj} נכתב ל-{OUTPUT_TAB(obj)}")
+    st.info("טענת ל-Salesforce — ה-DB לא משקף עוד את המצב האמיתי. רענן לפני הפעם הבאה.")
+    st.rerun()
+
+
+def _render_object_card(schema: "RuntimeSchema", obj: str, order: int, obj_labels: dict) -> None:
+    label = obj_labels.get(obj, obj)
+    build_result = st.session_state.get(f"build_{obj}")
+    status_icon = "✅" if build_result else "⬜"
+
+    with st.container(border=True):
+        col_title, col_btn = st.columns([7, 2])
+        col_title.markdown(f"**{order}. {label}** (`{obj}`) {status_icon}")
+
+        if col_btn.button("בנה", key=f"build_btn_{obj}"):
+            _run_build_pipeline(schema, obj)
+
+        if build_result:
+            c = build_result.counts
+            st.caption(
+                f"חדשים: **{c.get('inserts', 0)}** · "
+                f"קיימים: **{c.get('upserts', 0)}** · "
+                f"ריבוי: **{c.get('ambiguous', 0)}** · "
+                f"ללא-זיהוי: **{c.get('unkeyed', 0)}**"
+            )
+            if c.get("ambiguous", 0) > 0:
+                _render_manual_panel(schema, obj, build_result)
+            if c.get("unkeyed", 0) > 0:
+                _render_unkeyed_panel(schema, obj, build_result)
+            _render_paste_back(schema, obj)
+
+        validation = st.session_state.get(f"validate_{obj}")
+        if validation is not None:
+            n = len(validation)
+            if n == 0:
+                st.success("✅ ולידציה תקינה (תאריכים · Id)")
+            else:
+                if st.button(f"⚠️ {n} בעיות", key=f"val_chip_{obj}"):
+                    st.session_state[f"show_issues_{obj}"] = not st.session_state.get(
+                        f"show_issues_{obj}", False
+                    )
+                if st.session_state.get(f"show_issues_{obj}"):
+                    for issue in validation:
+                        st.error(f"{issue.label} {issue.location}: {issue.message}")
+
+
+def screen_build() -> None:
+    schema: RuntimeSchema = st.session_state["schema"]
+    tiers = _load_order(schema)
+    junction_apis = {jc.junction_object for jc in schema.junctions}
+    all_obj_labels = {o.api_name: o.display_name for o in schema.objects}
+
+    # DB freshness warning (populated in Task 11)
+    db_age = st.session_state.get("db_connected_age_days")
+    if db_age and db_age > 7:
+        st.warning(
+            f"⚠️ גיליון ה-DB עודכן לפני {db_age:.0f} ימים — "
+            "החלטות insert/upsert מסתמכות עליו. מומלץ לרענן."
+        )
+
+    if not tiers:
+        st.info("אין אובייקטים לבנייה — חבר קלט ומפה שדות קודם.")
+        return
+
+    st.subheader("בנייה ופלט")
+    st.caption("בנה כל אובייקט לפי סדר הטעינה. junctions ממתינים ל-Ids של ההורים.")
+
+    tier_num = 0
+    for tier in tiers:
+        for obj in tier:
+            if obj in junction_apis:
+                continue
+            tier_num += 1
+            _render_object_card(schema, obj, tier_num, all_obj_labels)
+
+    if schema.junctions:
+        st.divider()
+        st.markdown("**קשרי Junction**")
+        for jc in schema.junctions:
+            _render_junction_card(schema, jc, all_obj_labels)
+
+    built = [o for o in all_obj_labels if st.session_state.get(f"build_{o}")]
+    if built:
+        _set_status(5, "done")
+
+
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
@@ -1048,7 +1246,7 @@ def main() -> None:
     elif step == 4:
         screen_lookups()
     elif step == 5:
-        screen_stub(5, "בנייה ופלט")
+        screen_build()
 
 
 main()
