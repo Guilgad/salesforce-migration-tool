@@ -139,3 +139,31 @@ def test_apply_extra_fields_skips_other_object():
     records = [_make_record({"FirstName": "Alice"}, object_api="Contact")]
     result = apply_extra_fields(records, s, "Contact")
     assert "Status" not in result[0].values
+
+
+# ── convert_id_15_to_18 ───────────────────────────────────────────────────────
+
+from modules.orchestrator import convert_id_15_to_18
+
+
+def test_id_15_converts_to_18():
+    id15 = "0031000000AbCdE"
+    id18 = convert_id_15_to_18(id15)
+    assert len(id18) == 18
+    assert id18.startswith(id15)
+
+
+def test_id_18_unchanged():
+    id18 = "003100000AbCdEfAA"  # 18 chars already
+    assert convert_id_15_to_18(id18) == id18
+
+
+def test_id_empty_unchanged():
+    assert convert_id_15_to_18("") == ""
+    assert convert_id_15_to_18(None) is None
+
+
+def test_id_15_checksum_correct():
+    result = convert_id_15_to_18("001000000000001")
+    assert len(result) == 18
+    assert result.startswith("001000000000001")

@@ -143,3 +143,23 @@ def apply_extra_fields(records, schema, object_api: str) -> list:
             values=new_values,
         ))
     return result
+
+
+# ── 15→18 Salesforce Id conversion ───────────────────────────────────────────
+
+_SF_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+
+
+def convert_id_15_to_18(id_val):
+    """Convert a 15-char Salesforce Id to its 18-char canonical form. Others unchanged."""
+    if not id_val or len(id_val) != 15:
+        return id_val
+    suffix = ""
+    for chunk in range(3):
+        flags = 0
+        for pos in range(5):
+            c = id_val[chunk * 5 + pos]
+            if c.isupper():
+                flags += 1 << pos
+        suffix += _SF_CHARS[flags]
+    return id_val + suffix
