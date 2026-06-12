@@ -273,3 +273,103 @@ def test_field_mappings_extracted():
         db_pairs=set(), config=cfg, data_start_row=3,
     )
     assert records[0].field_values.get("Status") == "Responded"
+
+
+# ── build_junction_grid ──────────────────────────────────────────────────────
+
+def _make_records(rows_data: list[dict]) -> list[junction_builder.JunctionRecord]:
+    return [
+        junction_builder.JunctionRecord(
+            source_row=d.get("source_row", 3),
+            local_key_a=d.get("local_key_a", "A1"),
+            local_key_b=d.get("local_key_b", "B1"),
+            sf_id_a=d.get("sf_id_a", "003xx"),
+            sf_id_b=d.get("sf_id_b", "701xx"),
+            field_values=d.get("field_values", {}),
+            exists_in_db=d.get("exists_in_db", False),
+            warning=d.get("warning", None),
+        )
+        for d in rows_data
+    ]
+
+
+def test_grid_has_two_header_rows():
+    records = _make_records([{}])
+    grid, _ = junction_builder.build_junction_grid(records, CM_CFG)
+    assert len(grid) >= 2
+    assert grid[0][0] != grid[1][0]  # Hebrew label ≠ API name
+
+
+def test_grid_id_fields_in_api_header():
+    records = _make_records([{}])
+    grid, _ = junction_builder.build_junction_grid(records, CM_CFG)
+    assert "ContactId" in grid[1]
+    assert "CampaignId" in grid[1]
+
+
+def test_grid_skips_existing_and_warning():
+    records = _make_records([
+        {"exists_in_db": True},
+        {"warning": "חסר Id"},
+        {"sf_id_a": "003aa", "sf_id_b": "701bb"},  # valid
+    ])
+    grid, _ = junction_builder.build_junction_grid(records, CM_CFG)
+    assert len(grid) == 3  # 2 headers + 1 valid row
+
+
+def test_grid_data_row_has_correct_ids():
+    records = _make_records([{"sf_id_a": "003aa", "sf_id_b": "701bb"}])
+    grid, _ = junction_builder.build_junction_grid(records, CM_CFG)
+    data_row = grid[2]
+    assert "003aa" in data_row
+    assert "701bb" in data_row
+
+
+def test_grid_extra_field_in_data_row():
+    cfg = JunctionConfig(
+        object_a="Contact", block_a="C", object_b="Campaign", block_b="K",
+        junction_object="CampaignMember", id_field_a="ContactId", id_field_b="CampaignId",
+        field_mappings=[("Status", 5)],
+    )
+    records = _make_records([{"field_values": {"Status": "Responded"}}])
+    grid, _ = junction_builder.build_junction_grid(records, cfg)
+    assert "Responded" in grid[2]
+    assert "Status" in grid[1]
+
+
+def test_grid_cell_colors_mark_display_column():
+    records = _make_records([{}])
+    _, cell_colors = junction_builder.build_junction_grid(records, CM_CFG)
+    assert len(cell_colors) >= 1
+    assert all(c[2] == "red" for c in cell_colors)
+
+
+# ── db_junction_pairs_from_records ───────────────────────────────────────────
+
+def test_db_pairs_non_symmetric():
+    db_records = [{"ContactId": "003xx", "CampaignId": "701yy"}]
+    pairs = junction_builder.db_junction_pairs_from_records(db_records, CM_CFG)
+    assert ("003xx", "701yy") in pairs
+
+
+def test_db_pairs_symmetric_sorted():
+    db_records = [
+        {"npe4__Contact__c": "003bb", "npe4__RelatedContact__c": "003aa"},
+    ]
+    pairs = junction_builder.db_junction_pairs_from_records(db_records, REL_CFG)
+    assert ("003aa", "003bb") in pairs
+
+
+def test_db_pairs_missing_id_skipped():
+    db_records = [{"ContactId": "003xx", "CampaignId": ""}]
+    pairs = junction_builder.db_junction_pairs_from_records(db_records, CM_CFG)
+    assert len(pairs) == 0
+
+
+def test_db_pairs_multiple_records():
+    db_records = [
+        {"ContactId": "003a", "CampaignId": "701a"},
+        {"ContactId": "003b", "CampaignId": "701b"},
+    ]
+    pairs = junction_builder.db_junction_pairs_from_records(db_records, CM_CFG)
+    assert len(pairs) == 2

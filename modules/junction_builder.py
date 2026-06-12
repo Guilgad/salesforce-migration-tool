@@ -136,3 +136,70 @@ def derive_junctions(
         ))
 
     return results
+
+
+_HEADER_ROWS = 2
+
+
+def build_junction_grid(
+    junction_records: list[JunctionRecord],
+    config: JunctionConfig,
+) -> tuple[list[list[str]], list[tuple[int, int, str]]]:
+    """
+    Build a 2-header load grid for a set of junction records.
+
+    Row 0: Hebrew display labels.
+    Row 1: API field names (id_field_a, id_field_b, then extra fields).
+    Data rows: one per valid junction record (skips exists_in_db and warning).
+
+    Returns (grid, cell_colors) where cell_colors marks display-only column (col 0) red.
+    """
+    extra_apis = [api for api, _ in config.field_mappings]
+
+    header_he = [
+        f"{config.object_a} (שם)",
+        f"{config.object_a} Id",
+        f"{config.object_b} Id",
+    ] + extra_apis
+
+    header_api = [
+        "",              # display-only — not loaded
+        config.id_field_a,
+        config.id_field_b,
+    ] + extra_apis
+
+    grid: list[list[str]] = [header_he, header_api]
+    cell_colors: list[tuple[int, int, str]] = []
+
+    row_idx = 0
+    for rec in junction_records:
+        if rec.exists_in_db or rec.warning:
+            continue
+        extra_vals = [rec.field_values.get(api, "") for api in extra_apis]
+        grid.append([rec.local_key_a, rec.sf_id_a, rec.sf_id_b] + extra_vals)
+        cell_colors.append((_HEADER_ROWS + row_idx, 0, "red"))
+        row_idx += 1
+
+    return grid, cell_colors
+
+
+def db_junction_pairs_from_records(
+    db_records: list[dict],
+    config: JunctionConfig,
+) -> set[tuple[str, str]]:
+    """
+    Extract (id_a, id_b) pairs from DB records of the junction object.
+
+    config.symmetric=True → pairs stored as (min, max) so A↔B and B↔A are identical.
+    Skips records where either Id is empty.
+    """
+    pairs: set[tuple[str, str]] = set()
+    for rec in db_records:
+        a = str(rec.get(config.id_field_a, "") or "").strip()
+        b = str(rec.get(config.id_field_b, "") or "").strip()
+        if a and b:
+            if config.symmetric:
+                pairs.add((min(a, b), max(a, b)))
+            else:
+                pairs.add((a, b))
+    return pairs
