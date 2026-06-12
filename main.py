@@ -38,15 +38,6 @@ st.markdown(
     ' [data-testid="stSidebarCollapseButton"] {display: none;}'
     ' [data-testid="stHeader"] {display: none;}'
     " .block-container {padding-top: 1rem;}"
-    # top-bar card styles
-    " .v2-card {border-radius:6px; padding:10px 14px; cursor:pointer;"
-    "  font-size:0.82rem; line-height:1.35; min-height:64px;"
-    "  display:flex; flex-direction:column; justify-content:center;}"
-    " .v2-card-done {background:#1a6b3c; color:#fff;}"
-    " .v2-card-current {background:#fff; color:#1a1a1a;"
-    "  border-top:3px solid #0068b2; box-shadow:0 1px 4px rgba(0,0,0,.15);}"
-    " .v2-card-pending {background:#e8e8e8; color:#555;}"
-    " .v2-card-error {background:#b30000; color:#fff;}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -70,11 +61,12 @@ STEPS = [
     (5, "בנייה ופלט"),
 ]
 
-_CARD_COLORS = {
-    "done":    "v2-card-done",
-    "error":   "v2-card-error",
-    "current": "v2-card-current",
-    "pending": "v2-card-pending",
+# status → (background, text-color, top-border) for the nav cards
+_CARD_STYLE = {
+    "done":    ("#1a6b3c", "#ffffff", "1px solid rgba(0,0,0,.12)"),
+    "error":   ("#b30000", "#ffffff", "1px solid rgba(0,0,0,.12)"),
+    "pending": ("#e8e8e8", "#555555", "1px solid rgba(0,0,0,.12)"),
+    "current": ("#ffffff", "#15314f", "3px solid #0068b2"),
 }
 
 
@@ -92,21 +84,45 @@ def _status_icon(status: str) -> str:
 
 
 def _topbar() -> None:
-    """Sticky top navigation bar — 5 colored cards."""
+    """Sticky top navigation bar — 5 colored status cards."""
     current = st.session_state["step"]
-    cols = st.columns(5, gap="small")
-    for col, (num, label) in zip(cols, STEPS):
-        status = _get_status(num)
-        css_class = "current" if num == current else status
-        icon = _status_icon(css_class)
-        if col.button(
-            f"{icon} {num}. {label}",
-            key=f"nav_{num}",
-            use_container_width=True,
-        ):
-            st.session_state["step"] = num
-            st.rerun()
-    st.divider()
+
+    # Resolve each step's visual state (current overrides its stored status).
+    states = {num: ("current" if num == current else _get_status(num))
+              for num, _ in STEPS}
+
+    # Dynamic CSS: pin the bar (keyed container) + colour each card by its state.
+    # Streamlit buttons can't take a class, so we target their .st-key-{key} wrapper.
+    css = [
+        ".st-key-v2_topbar{position:sticky;top:0;z-index:999;"
+        "background:var(--background-color);padding:0.45rem 0 0.35rem;"
+        "box-shadow:0 2px 6px rgba(0,0,0,.06);}"
+    ]
+    for num, state in states.items():
+        bg, fg, top_border = _CARD_STYLE[state]
+        css.append(
+            f".st-key-nav_{num} button{{"
+            f"background:{bg}!important;color:{fg}!important;"
+            "border:1px solid rgba(0,0,0,.12)!important;"
+            f"border-top:{top_border}!important;border-radius:6px!important;"
+            "min-height:62px!important;font-size:.85rem!important;"
+            "font-weight:600!important;line-height:1.3!important;"
+            "white-space:normal!important;box-shadow:0 1px 3px rgba(0,0,0,.12)!important;}"
+            f".st-key-nav_{num} button:hover{{filter:brightness(1.04);}}"
+        )
+    st.markdown("<style>" + "".join(css) + "</style>", unsafe_allow_html=True)
+
+    with st.container(key="v2_topbar"):
+        cols = st.columns(5, gap="small")
+        for col, (num, label) in zip(cols, STEPS):
+            icon = _status_icon(states[num])
+            if col.button(
+                f"{icon} {num}. {label}",
+                key=f"nav_{num}",
+                use_container_width=True,
+            ):
+                st.session_state["step"] = num
+                st.rerun()
 
 
 # ─── screens ──────────────────────────────────────────────────────────────────
@@ -1404,26 +1420,6 @@ def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
 
-# ─── sticky top-bar CSS ───────────────────────────────────────────────────────
-
-def _inject_sticky_topbar_css() -> None:
-    """Pin the top navigation row to the viewport top."""
-    st.markdown(
-        "<style>"
-        ".block-container > div:first-child {"
-        "  position: sticky;"
-        "  top: 0;"
-        "  z-index: 999;"
-        "  background: var(--background-color);"
-        "  padding-top: 0.5rem;"
-        "  padding-bottom: 0.25rem;"
-        "}"
-        ".block-container { padding-top: 0 !important; }"
-        "</style>",
-        unsafe_allow_html=True,
-    )
-
-
 # ─── sidebar: profile panel ───────────────────────────────────────────────────
 
 def _sidebar_profiles() -> None:
@@ -1499,7 +1495,6 @@ def _sidebar_profiles() -> None:
 # ─── main router ──────────────────────────────────────────────────────────────
 
 def main() -> None:
-    _inject_sticky_topbar_css()
     _sidebar_profiles()
     _topbar()
     step = st.session_state["step"]
