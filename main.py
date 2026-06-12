@@ -787,20 +787,38 @@ def screen_identity() -> None:
 
 
 def _load_order(schema: "RuntimeSchema") -> list[list[str]]:
-    """Topological sort of objects by Lookup dependencies.
+    """Topological sort of objects (including junction objects) by dependencies.
     Returns list of tiers; each tier is a list of object api_names."""
-    all_objs = [o.api_name for o in schema.objects]
+    loaded_objs = [o.api_name for o in schema.objects]
+    junction_objs = [jc.junction_object for jc in schema.junctions]
+    all_objs = loaded_objs + [o for o in junction_objs if o not in loaded_objs]
+
     deps: dict[str, set[str]] = {o: set() for o in all_objs}
+
+    # Lookup edges: source depends on target
     for lc in schema.lookups:
         if lc.source_object in deps and lc.target_object in all_objs:
             deps[lc.source_object].add(lc.target_object)
+
+    # Junction edges: junction_object depends on both parents
+    for jc in schema.junctions:
+        jobj = jc.junction_object
+        if jobj not in deps:
+            deps[jobj] = set()
+        if jc.object_a in all_objs:
+            deps[jobj].add(jc.object_a)
+        if jc.object_b in all_objs:
+            deps[jobj].add(jc.object_b)
+
     tiers: list[list[str]] = []
     remaining = set(all_objs)
+    placed: set[str] = set()
     while remaining:
-        tier = sorted(o for o in remaining if deps[o] <= (set(all_objs) - remaining))
+        tier = sorted(o for o in remaining if deps[o] <= placed)
         if not tier:  # cycle guard
             tier = sorted(remaining)
         tiers.append(tier)
+        placed |= set(tier)
         remaining -= set(tier)
     return tiers
 
