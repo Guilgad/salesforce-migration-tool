@@ -95,3 +95,54 @@ def test_load_order_no_junctions_unchanged():
     tiers = main_module._load_order(schema)
     flat = [obj for tier in tiers for obj in tier]
     assert flat.index("Account") < flat.index("Contact")
+
+
+def test_step4_junction_section_renders():
+    at = _at_step4()
+    assert not at.exception
+    all_text = " ".join(
+        str(e.value) for e in
+        list(at.markdown) + list(at.subheader) + list(at.caption) + list(at.info)
+    ) + " ".join(str(e.label) for e in list(at.expander))
+    assert "קשר" in all_text or "junction" in all_text.lower() or "Junction" in all_text
+
+
+def test_step4_with_existing_junction_shows_label():
+    schema = RuntimeSchema(
+        objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")],
+        identity={
+            "Contact": IdentityConfig(mechanisms=[["Email"]]),
+            "Campaign": IdentityConfig(mechanisms=[["Name"]]),
+        },
+        junctions=[JunctionConfig(
+            object_a="Contact", block_a="C",
+            object_b="Campaign", block_b="K",
+            junction_object="CampaignMember",
+            id_field_a="ContactId", id_field_b="CampaignId",
+        )],
+    )
+    at = _at_step4(schema)
+    assert not at.exception
+    all_text = " ".join(str(e.value) for e in list(at.markdown) + list(at.subheader) + list(at.caption))
+    assert "CampaignMember" in all_text
+
+
+def test_step4_load_order_shows_junction_object():
+    schema = RuntimeSchema(
+        objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")],
+        identity={},
+        junctions=[JunctionConfig(
+            object_a="Contact", block_a="C", object_b="Campaign", block_b="K",
+            junction_object="CampaignMember", id_field_a="ContactId", id_field_b="CampaignId",
+        )],
+    )
+    at = _at_step4(schema)
+    assert not at.exception
+    all_text = " ".join(str(e.value) for e in list(at.markdown))
+    assert "CampaignMember" in all_text
+
+
+def test_step4_no_exception_with_empty_objects():
+    schema = RuntimeSchema()
+    at = _at_step4(schema)
+    assert not at.exception

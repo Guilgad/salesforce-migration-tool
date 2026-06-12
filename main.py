@@ -7,7 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config.runtime_schema import (
-    RuntimeSchema, ObjectDef, ExtraField, IdentityConfig, LookupConfig, ValueMap, ValueMapEntry,
+    RuntimeSchema, ObjectDef, ExtraField, IdentityConfig, LookupConfig, JunctionConfig, ValueMap, ValueMapEntry,
     ROLE_FIELD, ROLE_CONTROL, ROLE_SKIP, ST_OK, ST_CHECK,
 )
 from modules import (  # noqa: F401 — validator/notes_store used in later slices
@@ -920,6 +920,111 @@ def screen_lookups() -> None:
         for i, tier in enumerate(tiers, 1):
             tier_labels = ", ".join(all_obj_labels.get(o, o) for o in tier)
             st.markdown(f"**{i}.** {tier_labels}")
+
+    st.divider()
+
+    # ── Junctions ─────────────────────────────────────────────────────────────
+    st.subheader("קשרי Junction")
+    st.caption("קשר בין שני אובייקטים דרך אובייקט-ביניים (למשל CampaignMember, npe4__Relationship__c).")
+
+    for i, jc in enumerate(schema.junctions):
+        with st.container(border=True):
+            c1, c2 = st.columns([8, 1])
+            c1.markdown(
+                f"**{jc.object_a}** + **{jc.object_b}** → **{jc.junction_object}**  \n"
+                f"Id A: `{jc.id_field_a}` · Id B: `{jc.id_field_b}`"
+                + (f"  \nבקרה: עמודה {jc.control_col_index}" if jc.control_col_index is not None else "")
+                + ("  \n🔄 סימטרי" if jc.symmetric else "")
+            )
+            if c2.button("🗑️", key=f"del_junction_{i}"):
+                schema.junctions.pop(i)
+                st.rerun()
+
+    with st.expander("➕ הוסף Junction"):
+        all_junction_obj_apis = [o.api_name for o in schema.objects]
+        all_junction_obj_labels = {o.api_name: o.display_name for o in schema.objects}
+
+        if not all_junction_obj_apis:
+            st.info("אין אובייקטים — חבר קלט ומפה שדות קודם.")
+        else:
+            jnc_obj_a = st.selectbox(
+                "אובייקט A",
+                options=all_junction_obj_apis,
+                format_func=lambda a: all_junction_obj_labels.get(a, a),
+                key="jnc_obj_a",
+            )
+            jnc_block_a = st.text_input(
+                "שם הבלוק של A (מהשורה הראשונה בטמפלייט)",
+                value=all_junction_obj_labels.get(jnc_obj_a, jnc_obj_a),
+                key="jnc_block_a",
+            )
+            jnc_obj_b = st.selectbox(
+                "אובייקט B",
+                options=all_junction_obj_apis,
+                format_func=lambda a: all_junction_obj_labels.get(a, a),
+                key="jnc_obj_b",
+            )
+            jnc_block_b = st.text_input(
+                "שם הבלוק של B (מהשורה הראשונה בטמפלייט)",
+                value=all_junction_obj_labels.get(jnc_obj_b, jnc_obj_b),
+                key="jnc_block_b",
+            )
+            jnc_junction_obj = st.text_input(
+                "אובייקט Junction (API name, למשל CampaignMember)",
+                key="jnc_junction_obj",
+            )
+            jnc_id_a = st.text_input(
+                "שדה Id של A על Junction (למשל ContactId)",
+                key="jnc_id_a",
+            )
+            jnc_id_b = st.text_input(
+                "שדה Id של B על Junction (למשל CampaignId)",
+                key="jnc_id_b",
+            )
+            jnc_symmetric = st.checkbox(
+                "סימטרי (NPSP — מונע כפילויות דו-כיווניות)",
+                key="jnc_symmetric",
+            )
+            jnc_has_control = st.checkbox(
+                "עמודת בקרה (צור רק כש=TRUE)",
+                key="jnc_has_control",
+            )
+            jnc_ctrl_col = None
+            if jnc_has_control:
+                ctrl_col_opts = [
+                    (idx, cm) for idx, cm in schema.mappings.items()
+                    if cm.role == ROLE_CONTROL
+                ]
+                if ctrl_col_opts:
+                    jnc_ctrl_col = st.selectbox(
+                        "עמודת בקרה",
+                        options=[idx for idx, _ in ctrl_col_opts],
+                        format_func=lambda i: schema.mappings[i].field_api or f"עמודה {i}",
+                        key="jnc_ctrl_col",
+                    )
+                else:
+                    st.info("אין עמודות בקרה — מפה עמודה עם תפקיד 'בקרה' בשלב 2.")
+
+            can_add = (
+                jnc_junction_obj.strip()
+                and jnc_id_a.strip()
+                and jnc_id_b.strip()
+                and jnc_block_a.strip()
+                and jnc_block_b.strip()
+            )
+            if st.button("הוסף Junction", key="jnc_add", disabled=not can_add):
+                schema.junctions.append(JunctionConfig(
+                    object_a=jnc_obj_a,
+                    block_a=jnc_block_a.strip(),
+                    object_b=jnc_obj_b,
+                    block_b=jnc_block_b.strip(),
+                    junction_object=jnc_junction_obj.strip(),
+                    id_field_a=jnc_id_a.strip(),
+                    id_field_b=jnc_id_b.strip(),
+                    control_col_index=jnc_ctrl_col,
+                    symmetric=jnc_symmetric,
+                ))
+                st.rerun()
 
     n = len(schema.lookups)
     _set_status(4, "done" if True else "pending")
