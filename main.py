@@ -7,7 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 from config.runtime_schema import (
-    RuntimeSchema, ObjectDef, ExtraField, IdentityConfig, ValueMap, ValueMapEntry,
+    RuntimeSchema, ObjectDef, ExtraField, IdentityConfig, LookupConfig, ValueMap, ValueMapEntry,
     ROLE_FIELD, ROLE_CONTROL, ROLE_SKIP, ST_OK, ST_CHECK,
 )
 from modules import (  # noqa: F401 — validator/notes_store used in later slices
@@ -805,6 +805,108 @@ def _load_order(schema: "RuntimeSchema") -> list[list[str]]:
     return tiers
 
 
+def _lookup_col_label(schema: "RuntimeSchema", lc: "LookupConfig") -> str:
+    cm = schema.mappings.get(lc.source_col_index)
+    if cm:
+        return cm.field_api or f"עמודה {lc.source_col_index}"
+    return f"עמודה {lc.source_col_index}"
+
+
+def screen_lookups() -> None:
+    schema: RuntimeSchema = st.session_state.get("schema", RuntimeSchema())
+    _set_status(4, "pending")
+
+    st.subheader("קשרי Lookup")
+    st.caption("עמודה שערכה צריך להתרגם ל-Id של אובייקט אחר (למשל AccountId).")
+
+    # ── Existing lookups ──────────────────────────────────────────────────────
+    for i, lc in enumerate(schema.lookups):
+        col_label = _lookup_col_label(schema, lc)
+        with st.container(border=True):
+            c1, c2 = st.columns([8, 1])
+            c1.markdown(
+                f"**{lc.source_object}** · {col_label} → **{lc.target_object}** `{lc.target_field}`  \n"
+                f"זוהה לפי: {', '.join(lc.identified_by) or '—'}"
+            )
+            if c2.button("🗑️", key=f"del_lookup_{i}"):
+                schema.lookups.pop(i)
+                st.rerun()
+
+    # ── Add Lookup ────────────────────────────────────────────────────────────
+    all_obj_apis = [o.api_name for o in schema.objects]
+    all_obj_labels = {o.api_name: o.display_name for o in schema.objects}
+    target_apis = all_obj_apis + [o.api_name for o in schema.extra_objects]
+    target_labels = {**all_obj_labels, **{o.api_name: o.display_name for o in schema.extra_objects}}
+
+    with st.expander("➕ הוסף Lookup"):
+        src_obj = st.selectbox(
+            "אובייקט מקור",
+            options=all_obj_apis,
+            format_func=lambda a: all_obj_labels.get(a, a),
+            key="lkp_src_obj",
+        )
+        src_cols = [
+            (idx, cm)
+            for idx, cm in schema.mappings.items()
+            if cm.object_api == src_obj and cm.role == ROLE_FIELD
+        ]
+        src_col_opts = [idx for idx, _ in src_cols]
+        src_col_labels = {idx: cm.field_api or f"עמודה {idx}" for idx, cm in src_cols}
+
+        src_col = st.selectbox(
+            "עמודת מקור (הערך הגולמי)",
+            options=src_col_opts,
+            format_func=lambda i: src_col_labels.get(i, str(i)),
+            key="lkp_src_col",
+        ) if src_col_opts else None
+
+        tgt_obj = st.selectbox(
+            "אובייקט יעד",
+            options=target_apis,
+            format_func=lambda a: target_labels.get(a, a),
+            key="lkp_tgt_obj",
+        )
+        tgt_field = st.text_input(
+            "שדה יעד על האובייקט המקור (למשל AccountId)",
+            key="lkp_tgt_field",
+        )
+        tgt_identity = schema.identity.get(tgt_obj, IdentityConfig())
+        default_mech = tgt_identity.mechanisms[0] if tgt_identity.mechanisms else []
+        identified_by = st.multiselect(
+            "זוהה לפי (שדות הזיהוי של היעד)",
+            options=default_mech or ["Name"],
+            default=default_mech,
+            key="lkp_id_by",
+        )
+
+        if st.button("הוסף", key="lkp_add") and src_col is not None and tgt_field.strip():
+            schema.lookups.append(
+                LookupConfig(
+                    source_object=src_obj,
+                    source_col_index=src_col,
+                    target_object=tgt_obj,
+                    target_field=tgt_field.strip(),
+                    identified_by=identified_by,
+                )
+            )
+            st.rerun()
+
+    st.divider()
+
+    # ── Load order ────────────────────────────────────────────────────────────
+    st.subheader("סדר טעינה")
+    tiers = _load_order(schema)
+    if not tiers:
+        st.info("אין אובייקטים לטעינה.")
+    else:
+        for i, tier in enumerate(tiers, 1):
+            tier_labels = ", ".join(all_obj_labels.get(o, o) for o in tier)
+            st.markdown(f"**{i}.** {tier_labels}")
+
+    n = len(schema.lookups)
+    _set_status(4, "done" if True else "pending")
+
+
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
@@ -821,7 +923,7 @@ def main() -> None:
     elif step == 3:
         screen_identity()
     elif step == 4:
-        screen_stub(4, "קשרים ו-Lookups")
+        screen_lookups()
     elif step == 5:
         screen_stub(5, "בנייה ופלט")
 
