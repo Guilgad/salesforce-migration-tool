@@ -147,3 +147,6 @@ class RuntimeSchema:
 
     # ── Step 4: Junctions ─────────────────────────────────────────────────────
     junctions: list[JunctionConfig] = field(default_factory=list)
+
+    # ── Task 2 / P6: Digit-only fields ───────────────────────────────────────
+    digits_only_fields: set = field(default_factory=set)

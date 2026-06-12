@@ -252,3 +252,14 @@ def test_runtime_schema_junctions_field():
     schema.junctions.append(jc)
     assert len(schema.junctions) == 1
     assert schema.junctions[0].symmetric is True
+
+
+def test_digits_only_fields_default_empty():
+    s = RuntimeSchema()
+    assert s.digits_only_fields == set()
+
+
+def test_digits_only_fields_can_set():
+    s = RuntimeSchema()
+    s.digits_only_fields = {"ID_Number__c", "MobilePhone"}
+    assert "MobilePhone" in s.digits_only_fields
