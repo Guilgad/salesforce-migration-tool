@@ -72,6 +72,21 @@ class LookupConfig:
 
 
 @dataclass
+class JunctionConfig:
+    """Generic junction / relationship object definition."""
+    object_a: str                             # first parent object API name
+    block_a: str                              # block name in split records for A
+    object_b: str                             # second parent object API name
+    block_b: str                              # block name in split records for B
+    junction_object: str                      # junction/relationship object API name
+    id_field_a: str                           # field on junction pointing to A
+    id_field_b: str                           # field on junction pointing to B
+    control_col_index: int | None = None      # optional: only create when cell = TRUE
+    field_mappings: list[tuple[str, int]] = field(default_factory=list)  # [(field_api, col_idx)]
+    symmetric: bool = False                   # True = NPSP-style; DB check uses min/max sort
+
+
+@dataclass
 class ExtraField:
     """שדה-יעד ללא עמודת-מקור — ערך קבוע לכל הרשומות (למשל LeadSource)."""
     object_api: str
@@ -129,3 +144,6 @@ class RuntimeSchema:
 
     # ── Step 4: Lookups ───────────────────────────────────────────────────────
     lookups: list[LookupConfig] = field(default_factory=list)
+
+    # ── Step 4: Junctions ─────────────────────────────────────────────────────
+    junctions: list[JunctionConfig] = field(default_factory=list)

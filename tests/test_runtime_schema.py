@@ -218,3 +218,37 @@ def test_load_order_chain():
     result = _get_load_order_fn()(schema)
     assert result[0] == ["Account"]
     assert set(result[1]) == {"Contact", "Opportunity"}
+
+
+# ── Task 1: JunctionConfig ───────────────────────────────────────────────────
+
+from config.runtime_schema import JunctionConfig, RuntimeSchema
+
+
+def test_junction_config_defaults():
+    jc = JunctionConfig(
+        object_a="Contact",
+        block_a="איש קשר",
+        object_b="Campaign",
+        block_b="פרטי האירוע",
+        junction_object="CampaignMember",
+        id_field_a="ContactId",
+        id_field_b="CampaignId",
+    )
+    assert jc.control_col_index is None
+    assert jc.field_mappings == []
+    assert jc.symmetric is False
+
+
+def test_runtime_schema_junctions_field():
+    schema = RuntimeSchema()
+    assert schema.junctions == []
+    jc = JunctionConfig(
+        object_a="Contact", block_a="A", object_b="Contact", block_b="B",
+        junction_object="npe4__Relationship__c",
+        id_field_a="npe4__Contact__c", id_field_b="npe4__RelatedContact__c",
+        symmetric=True,
+    )
+    schema.junctions.append(jc)
+    assert len(schema.junctions) == 1
+    assert schema.junctions[0].symmetric is True
