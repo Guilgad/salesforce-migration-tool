@@ -24,7 +24,7 @@ from modules.orchestrator import (
 st.set_page_config(
     page_title="כלי מיגרציה לסיילספורס v2",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 st.markdown(
@@ -1404,9 +1404,103 @@ def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
 
+# ─── sticky top-bar CSS ───────────────────────────────────────────────────────
+
+def _inject_sticky_topbar_css() -> None:
+    """Pin the top navigation row to the viewport top."""
+    st.markdown(
+        "<style>"
+        ".block-container > div:first-child {"
+        "  position: sticky;"
+        "  top: 0;"
+        "  z-index: 999;"
+        "  background: var(--background-color);"
+        "  padding-top: 0.5rem;"
+        "  padding-bottom: 0.25rem;"
+        "}"
+        ".block-container { padding-top: 0 !important; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
+# ─── sidebar: profile panel ───────────────────────────────────────────────────
+
+def _sidebar_profiles() -> None:
+    """Sidebar — profile save/load panel + personal notes."""
+    with st.sidebar:
+        st.markdown("### 💾 פרופיל טבלה")
+
+        with st.expander("שמור פרופיל נוכחי"):
+            profile_name = st.text_input(
+                "שם הפרופיל",
+                key="profile_save_name",
+                placeholder="למשל: Tick-Check — Contact + Campaign",
+            )
+            if st.button("שמור", key="profile_save_btn"):
+                current_schema: RuntimeSchema = st.session_state["schema"]
+                input_rows = st.session_state.get("input_rows", [])
+                col_labels: list[str] = []
+                if input_rows and len(input_rows) > current_schema.label_row:
+                    col_labels = [str(c).strip() for c in input_rows[current_schema.label_row]
+                                  if str(c).strip()]
+                try:
+                    path = profile_store.save_profile(profile_name, current_schema, col_labels)
+                    st.success(f"נשמר: {path.name}")
+                except ValueError as e:
+                    st.error(str(e))
+
+        profiles = profile_store.list_profiles()
+        if profiles:
+            st.markdown("**פרופילים שמורים**")
+            input_rows = st.session_state.get("input_rows", [])
+            cur_schema: RuntimeSchema = st.session_state["schema"]
+            cur_labels: list[str] = []
+            if input_rows and len(input_rows) > cur_schema.label_row:
+                cur_labels = [str(c).strip() for c in input_rows[cur_schema.label_row]
+                              if str(c).strip()]
+
+            for entry in profiles:
+                c1, c2 = st.columns([7, 2])
+                c1.markdown(f"**{entry['name']}**")
+
+                score = profile_store.match_score(entry["column_labels"], cur_labels)
+                total = len(entry["column_labels"])
+                if total > 0 and score >= 2:
+                    c1.caption(f"{score}/{total} עמודות תואמות")
+
+                key_suffix = entry["path"].stem
+                if c2.button("טען", key=f"pload_{key_suffix}"):
+                    try:
+                        _name, loaded, _lbls = profile_store.load_profile(entry["path"])
+                        st.session_state["schema"] = loaded
+                        st.success(f"טעון: {_name}")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"שגיאה: {exc}")
+                if c2.button("🗑️", key=f"pdel_{key_suffix}"):
+                    profile_store.delete_profile(entry["path"])
+                    st.rerun()
+
+        st.divider()
+        st.markdown("### 📝 הערות")
+        notes_val = notes_store.load()
+        notes_text = st.text_area(
+            "הערות אישיות",
+            value=notes_val,
+            key="notes_text",
+            height=150,
+            label_visibility="collapsed",
+        )
+        if notes_text != notes_val:
+            notes_store.save(notes_text)
+
+
 # ─── main router ──────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _inject_sticky_topbar_css()
+    _sidebar_profiles()
     _topbar()
     step = st.session_state["step"]
     if step == 1:

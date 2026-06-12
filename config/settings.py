@@ -12,6 +12,9 @@ RECENT_SHEETS_FILE = PROJECT_ROOT / ".recent_sheets.json"
 # פתק-הערות חופשי של המשתמש (פאנל-צד) — נשמר מקומית, ב-.gitignore. רק המשתמש מוחק.
 NOTES_FILE = PROJECT_ROOT / ".notes.txt"
 
+# פרופילי-טבלה: קובץ JSON אחד לכל פרופיל, ב-.gitignore
+PROFILES_DIR = PROJECT_ROOT / ".profiles"
+
 # הרשאות: כתיבה/קריאה של גיליונות + קריאת capabilities (canEdit) לבדיקת הגישה
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
