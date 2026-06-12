@@ -61,12 +61,14 @@ STEPS = [
     (5, "בנייה ופלט"),
 ]
 
-# status → (background, text-color, top-border) for the nav cards
+# Nav-card visual states — exact values from the agreed mockup (topbar-final.html).
+# state → (background, border, text-color, box-shadow)
 _CARD_STYLE = {
-    "done":    ("#1a6b3c", "#ffffff", "1px solid rgba(0,0,0,.12)"),
-    "error":   ("#b30000", "#ffffff", "1px solid rgba(0,0,0,.12)"),
-    "pending": ("#e8e8e8", "#555555", "1px solid rgba(0,0,0,.12)"),
-    "current": ("#ffffff", "#15314f", "3px solid #0068b2"),
+    "not_visited": ("#ffffff", "2px solid #e0e0e0", "#222222", "none"),
+    "incomplete":  ("#f0f0f0", "2px solid #bbbbbb", "#777777", "none"),
+    "done":        ("#e8f5e9", "2px solid #81c784", "#2e6b32", "none"),
+    "active":      ("#ffffff", "3px solid #1565c0", "#15314f",
+                    "0 0 0 2px rgba(21,101,192,.18)"),
 }
 
 
@@ -79,45 +81,60 @@ def _get_status(step: int) -> str:
     return st.session_state["step_status"].get(step, "pending")
 
 
-def _status_icon(status: str) -> str:
-    return {"done": "🟢", "error": "🔴", "pending": "⬜", "current": "🔵"}.get(status, "⬜")
+def _step_badge(num: int) -> str:
+    """Live sub-label for a nav card (mockup: '3/3 מחוברים' …)."""
+    if num == 1:
+        connected = sum(bool(x) for x in (
+            schema.input_sheet_id, schema.fielddict_sheet_id, schema.db_sheet_id))
+        return f"{connected}/3 מחוברים"
+    return st.session_state.get("step_badge", {}).get(num, "—")
 
 
 def _topbar() -> None:
-    """Sticky top navigation bar — 5 colored status cards."""
+    """Sticky top navigation bar — colored status cards (per topbar-final mockup)."""
     current = st.session_state["step"]
+    visited = st.session_state.setdefault("visited", set())
+    visited.add(current)
 
-    # Resolve each step's visual state (current overrides its stored status).
-    states = {num: ("current" if num == current else _get_status(num))
-              for num, _ in STEPS}
+    # Resolve each card's visual state: active > done > visited-incomplete > not-visited.
+    states = {}
+    for num, _ in STEPS:
+        if num == current:
+            states[num] = "active"
+        elif _get_status(num) == "done":
+            states[num] = "done"
+        elif num in visited:
+            states[num] = "incomplete"
+        else:
+            states[num] = "not_visited"
 
-    # Dynamic CSS: pin the bar (keyed container) + colour each card by its state.
-    # Streamlit buttons can't take a class, so we target their .st-key-{key} wrapper.
+    # Dynamic CSS: pin the bar (keyed container) + paint each card by state.
+    # st.button takes no class, so we target its .st-key-{key} wrapper (verified live).
     css = [
         ".st-key-v2_topbar{position:sticky;top:0;z-index:999;"
-        "background:var(--background-color);padding:0.45rem 0 0.35rem;"
+        "background:var(--background-color);padding:0.5rem 0 0.4rem;"
         "box-shadow:0 2px 6px rgba(0,0,0,.06);}"
     ]
     for num, state in states.items():
-        bg, fg, top_border = _CARD_STYLE[state]
+        bg, border, fg, shadow = _CARD_STYLE[state]
         css.append(
             f".st-key-nav_{num} button{{"
             f"background:{bg}!important;color:{fg}!important;"
-            "border:1px solid rgba(0,0,0,.12)!important;"
-            f"border-top:{top_border}!important;border-radius:6px!important;"
-            "min-height:62px!important;font-size:.85rem!important;"
-            "font-weight:600!important;line-height:1.3!important;"
-            "white-space:normal!important;box-shadow:0 1px 3px rgba(0,0,0,.12)!important;}"
-            f".st-key-nav_{num} button:hover{{filter:brightness(1.04);}}"
+            f"border:{border}!important;border-radius:8px!important;"
+            f"box-shadow:{shadow}!important;min-height:78px!important;"
+            "line-height:1.3!important;white-space:normal!important;"
+            "padding:8px 10px!important;}"
+            f".st-key-nav_{num} button p{{color:{fg}!important;font-size:.84rem!important;}}"
+            f".st-key-nav_{num} button:hover{{filter:brightness(.98);}}"
         )
     st.markdown("<style>" + "".join(css) + "</style>", unsafe_allow_html=True)
 
     with st.container(key="v2_topbar"):
         cols = st.columns(5, gap="small")
         for col, (num, label) in zip(cols, STEPS):
-            icon = _status_icon(states[num])
+            check = "✓ " if states[num] == "done" else ""
             if col.button(
-                f"{icon} {num}. {label}",
+                f"{check}**{num}. {label}**  \n{_step_badge(num)}",
                 key=f"nav_{num}",
                 use_container_width=True,
             ):
