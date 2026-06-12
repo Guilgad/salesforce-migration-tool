@@ -12,8 +12,9 @@ from config.runtime_schema import (
 )
 from modules import (  # noqa: F401 — validator/notes_store used in later slices
     sheets_io, query_builder, field_dictionary, mapper, recent_sheets,
-    schema_reader, auto_mapper, validator, notes_store,
+    schema_reader, auto_mapper, validator, notes_store, profile_store,
 )
+from modules.db_freshness import days_since_modified as _db_days, freshness_label as _db_label
 from modules.orchestrator import (
     adapt_columns, apply_value_maps, apply_extra_fields,
     convert_id_15_to_18, read_ids_from_output_tab,
@@ -258,22 +259,15 @@ def _sheet_connector(
 
 
 def _db_freshness_label(sheet_id: str) -> str:
-    """Returns a freshness string like '⚠️ עודכן לפני 8 ימים' or '🟢 עודכן היום'."""
+    """Returns freshness label; also caches days in st.session_state['db_freshness_days']."""
     if not sheet_id:
         return ""
     try:
         meta = sheets_io.get_spreadsheet_meta(sheet_id)
-        from datetime import datetime, timezone
-        modified = meta.get("modifiedTime", "")
-        if modified:
-            dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
-            days = (datetime.now(timezone.utc) - dt).days
-            if days == 0:
-                return "🟢 עודכן היום"
-            elif days <= 3:
-                return f"🟡 עודכן לפני {days} ימים"
-            else:
-                return f"⚠️ עודכן לפני {days} ימים — מומלץ לרענן"
+        days = _db_days(meta.get("modifiedTime", ""))
+        if days is not None:
+            st.session_state["db_freshness_days"] = days
+            return _db_label(days)
     except Exception:
         pass
     return ""
@@ -339,14 +333,9 @@ def screen_step1() -> None:
         db_id, _, _ = _sheet_connector("db", "גיליון ייצוא הנתונים הקיימים מ-Salesforce")
         if db_id:
             schema.db_sheet_id = db_id
-            freshness = _db_freshness_label(db_id)
+            freshness = _db_freshness_label(db_id)   # also caches db_freshness_days
             if freshness:
                 st.caption(freshness)
-            # Track when DB was last connected so screen_build can warn if stale
-            if f"db_connected_at_{db_id}" not in st.session_state:
-                from datetime import datetime, timezone
-                st.session_state[f"db_connected_at_{db_id}"] = datetime.now(timezone.utc)
-            st.session_state["db_connected_at"] = st.session_state[f"db_connected_at_{db_id}"]
 
     with col_queries:
         st.subheader("שאילתות ל-Inspector")
@@ -1378,16 +1367,10 @@ def screen_build() -> None:
     junction_apis = {jc.junction_object for jc in schema.junctions}
     all_obj_labels = {o.api_name: o.display_name for o in schema.objects}
 
-    # Compute DB age in days from the connection timestamp set in screen_step1
-    db_connected_at = st.session_state.get("db_connected_at")
-    if db_connected_at:
-        from datetime import datetime, timezone
-        db_age_days = (datetime.now(timezone.utc) - db_connected_at).total_seconds() / 86400
-        st.session_state["db_connected_age_days"] = db_age_days
-    db_age = st.session_state.get("db_connected_age_days")
-    if db_age and db_age > 7:
+    db_age = st.session_state.get("db_freshness_days")
+    if db_age is not None and db_age > 7:
         st.warning(
-            f"⚠️ גיליון ה-DB עודכן לפני {db_age:.0f} ימים — "
+            f"⚠️ גיליון ה-DB עודכן לפני {db_age} ימים — "
             "החלטות insert/upsert מסתמכות עליו. מומלץ לרענן."
         )
 
