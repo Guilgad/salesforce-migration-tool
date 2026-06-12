@@ -1,3 +1,4 @@
+import os
 from config.runtime_schema import RuntimeSchema, ObjectDef
 
 
@@ -165,3 +166,55 @@ def test_runtime_schema_lookups_stored():
     schema.lookups.append(lc)
     assert len(schema.lookups) == 1
     assert schema.lookups[0].target_field == "AccountId"
+
+
+# ── Task 2: _load_order ───────────────────────────────────────────────────────
+
+def _get_load_order_fn():
+    """Import _load_order from main without triggering the full Streamlit app."""
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location(
+        "main",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    # Prevent Streamlit from running at import time
+    sys.modules.setdefault("streamlit", __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock())
+    spec.loader.exec_module(mod)
+    return mod._load_order
+
+
+def test_load_order_no_lookups():
+    schema = RuntimeSchema()
+    schema.objects = [ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")]
+    schema.lookups = []
+    result = _get_load_order_fn()(schema)
+    assert len(result) == 1
+    assert set(result[0]) == {"Contact", "Campaign"}
+
+
+def test_load_order_with_lookup():
+    schema = RuntimeSchema()
+    schema.objects = [ObjectDef("Contact", "אנשי קשר"), ObjectDef("Account", "חשבונות")]
+    schema.extra_objects = []
+    schema.lookups = [LookupConfig("Contact", 3, "Account", "AccountId", ["Name"])]
+    result = _get_load_order_fn()(schema)
+    assert result[0] == ["Account"]
+    assert result[1] == ["Contact"]
+
+
+def test_load_order_chain():
+    schema = RuntimeSchema()
+    schema.objects = [
+        ObjectDef("Contact", "אנשי קשר"),
+        ObjectDef("Account", "חשבונות"),
+        ObjectDef("Opportunity", "הזדמנויות"),
+    ]
+    schema.extra_objects = []
+    schema.lookups = [
+        LookupConfig("Contact", 3, "Account", "AccountId", ["Name"]),
+        LookupConfig("Opportunity", 5, "Account", "AccountId", ["Name"]),
+    ]
+    result = _get_load_order_fn()(schema)
+    assert result[0] == ["Account"]
+    assert set(result[1]) == {"Contact", "Opportunity"}

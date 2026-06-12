@@ -786,6 +786,25 @@ def screen_identity() -> None:
     _set_status(3, "done" if done_all else "pending")
 
 
+def _load_order(schema: "RuntimeSchema") -> list[list[str]]:
+    """Topological sort of objects by Lookup dependencies.
+    Returns list of tiers; each tier is a list of object api_names."""
+    all_objs = [o.api_name for o in schema.objects]
+    deps: dict[str, set[str]] = {o: set() for o in all_objs}
+    for lc in schema.lookups:
+        if lc.source_object in deps and lc.target_object in all_objs:
+            deps[lc.source_object].add(lc.target_object)
+    tiers: list[list[str]] = []
+    remaining = set(all_objs)
+    while remaining:
+        tier = sorted(o for o in remaining if deps[o] <= (set(all_objs) - remaining))
+        if not tier:  # cycle guard
+            tier = sorted(remaining)
+        tiers.append(tier)
+        remaining -= set(tier)
+    return tiers
+
+
 def screen_stub(step: int, label: str) -> None:
     st.info(f"שלב {step} ({label}) — בפרוסה הבאה")
 
