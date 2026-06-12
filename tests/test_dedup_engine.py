@@ -143,3 +143,20 @@ def test_counts_are_mutually_exclusive_and_sum_to_persons():
     c = res.counts
     assert c == {"inserts": 1, "upserts": 1, "ambiguous": 1, "unkeyed": 1}
     assert sum(c.values()) == len(res.persons)
+
+
+def test_dedup_internal_false_preserves_duplicates():
+    """When dedup_internal=False, rows with same key are NOT merged."""
+    records = [{"Email__c": "a@b.com"}, {"Email__c": "a@b.com"}]
+    mechanisms = [["Email__c"]]
+    result = dedup_engine.deduplicate(records, mechanisms, db_records=[], digits_only_fields=set(),
+                                     dedup_internal=False)
+    assert result.counts["inserts"] == 2
+
+
+def test_dedup_internal_default_true_still_merges():
+    """Default (dedup_internal=True) still merges duplicates."""
+    records = [{"Email__c": "a@b.com"}, {"Email__c": "a@b.com"}]
+    mechanisms = [["Email__c"]]
+    result = dedup_engine.deduplicate(records, mechanisms, db_records=[], digits_only_fields=set())
+    assert result.counts["inserts"] == 1

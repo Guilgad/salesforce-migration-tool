@@ -180,6 +180,7 @@ def deduplicate(
     *,
     digits_only_fields: set[str] | None = None,
     local_key_prefix: str = "C",
+    dedup_internal: bool = True,
 ) -> DedupResult:
     """
     מקבץ רשומות לאנשים ומכריע Insert/Upsert מול ה-DB.
@@ -194,7 +195,10 @@ def deduplicate(
     prepped = [_prep(r, digit_fields) for r in records]
     db_prepped = [_prep(r, digit_fields) for r in db_records]
 
-    groups = _group_internal(prepped, mechanisms)
+    if dedup_internal:
+        groups = _group_internal(prepped, mechanisms)
+    else:
+        groups = [[i] for i in range(len(prepped))]
     db_indices = _build_db_indices(db_prepped, mechanisms)
 
     persons: list[PersonResult] = []
