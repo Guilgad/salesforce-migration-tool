@@ -111,9 +111,13 @@ def _topbar() -> None:
     # Dynamic CSS: pin the bar (keyed container) + paint each card by state.
     # st.button takes no class, so we target its .st-key-{key} wrapper (verified live).
     css = [
-        ".st-key-v2_topbar{position:sticky;top:0;z-index:999;"
-        "background:var(--background-color);padding:0.5rem 0 0.4rem;"
-        "box-shadow:0 2px 6px rgba(0,0,0,.06);}"
+        # Sticky must sit on the layout WRAPPER — its parent is the tall content
+        # block, so it has room to pin. The keyed container itself is only as tall
+        # as the bar, so sticking it directly leaves no room and it scrolls away.
+        '[data-testid="stLayoutWrapper"]:has(> .st-key-v2_topbar){'
+        "position:sticky;top:0;z-index:999;background:var(--background-color);}"
+        ".st-key-v2_topbar{background:var(--background-color);"
+        "padding:0.5rem 0 0.4rem;box-shadow:0 2px 6px rgba(0,0,0,.06);}"
     ]
     for num, state in states.items():
         bg, border, fg, shadow = _CARD_STYLE[state]
@@ -143,6 +147,34 @@ def _topbar() -> None:
 
 
 # ─── screens ──────────────────────────────────────────────────────────────────
+
+
+def _db_query_fields(obj_api: str) -> list[str]:
+    """
+    Field APIs to pull in an object's DB-export query — needed for identity
+    matching + backfill, not just Id. Prefer the mapped fields (post-mapping
+    truth); before mapping, fall back to the input sheet's API row. Junction
+    objects also pull their two lookup id-fields (for the DB existence check).
+    """
+    fields: list[str] = []
+    for m in schema.mappings.values():
+        if (m.object_api == obj_api and m.role == ROLE_FIELD
+                and m.field_api and m.field_api not in fields):
+            fields.append(m.field_api)
+    if not fields:
+        rows = st.session_state.get("input_rows")
+        if rows:
+            for c in schema_reader.read_header_columns(rows, schema):
+                if c.object_api == obj_api:
+                    api = mapper.normalize_api(c.proposed_api)
+                    if api and api not in fields:
+                        fields.append(api)
+    for jc in schema.junctions:
+        if jc.junction_object == obj_api:
+            for idf in (jc.id_field_a, jc.id_field_b):
+                if idf and idf not in fields:
+                    fields.append(idf)
+    return fields
 
 
 def _screen_queries() -> None:
@@ -175,7 +207,7 @@ def _screen_queries() -> None:
     elif selected.startswith("ייצוא DB — "):
         obj_api = selected[len("ייצוא DB — "):]
         st.caption(f"💡 שמור תוצאה ללשונית: **{obj_api}** בגיליון ה-DB")
-        generated = query_builder.build_data_query(obj_api, [])
+        generated = query_builder.build_data_query(obj_api, _db_query_fields(obj_api))
 
     seed_key = (selected, generated)
     if st.session_state.get("_query_seed") != seed_key:
