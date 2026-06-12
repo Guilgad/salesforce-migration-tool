@@ -342,6 +342,11 @@ def screen_step1() -> None:
             freshness = _db_freshness_label(db_id)
             if freshness:
                 st.caption(freshness)
+            # Track when DB was last connected so screen_build can warn if stale
+            if f"db_connected_at_{db_id}" not in st.session_state:
+                from datetime import datetime, timezone
+                st.session_state[f"db_connected_at_{db_id}"] = datetime.now(timezone.utc)
+            st.session_state["db_connected_at"] = st.session_state[f"db_connected_at_{db_id}"]
 
     with col_queries:
         st.subheader("שאילתות ל-Inspector")
@@ -1031,8 +1036,7 @@ def screen_lookups() -> None:
                 ))
                 st.rerun()
 
-    n = len(schema.lookups)
-    _set_status(4, "done" if True else "pending")
+    _set_status(4, "done" if (schema.lookups or schema.junctions) else "pending")
 
 
 # ─── step 5: build & output ───────────────────────────────────────────────────
@@ -1054,19 +1058,199 @@ def _clear_read_cache() -> None:
 
 
 def _render_junction_card(schema, jc, obj_labels: dict) -> None:
-    st.info(f"Junction {jc.junction_object} — ממתין למימוש (Task 10)")
+    from modules.junction_builder import derive_junctions, build_junction_grid, db_junction_pairs_from_records
+    from modules.splitter import split_object
+    from modules.dedup_engine import deduplicate
+    from modules.sheets_io import rows_to_dicts, ensure_tab, write_grid
+    from config.runtime_schema import IdentityConfig
+
+    label = jc.junction_object
+    id_map_a = st.session_state.get(f"id_map_{jc.object_a}", {})
+    id_map_b = st.session_state.get(f"id_map_{jc.object_b}", {})
+
+    missing_parents = []
+    if not id_map_a:
+        missing_parents.append(obj_labels.get(jc.object_a, jc.object_a))
+    if not id_map_b:
+        missing_parents.append(obj_labels.get(jc.object_b, jc.object_b))
+
+    with st.container(border=True):
+        if missing_parents:
+            st.markdown(f"🔒 **{label}** — ממתין ל-Ids של: {', '.join(missing_parents)}")
+            st.caption("טען את ההורים ל-Salesforce, הדבק Ids (לחץ 'קלוט Ids' בכל הורה), ואז חזור לבנות.")
+            return
+
+        st.markdown(f"**{label}** (`{jc.junction_object}`)")
+        built = st.session_state.get(f"build_junction_{jc.junction_object}")
+        if built:
+            st.caption(f"נוצרו: **{built.get('created', 0)}** · קיימים ב-DB: **{built.get('exists', 0)}** · אזהרות: **{built.get('warnings', 0)}**")
+
+        if st.button("בנה Junction", key=f"build_junction_btn_{jc.junction_object}"):
+            with st.spinner(f"בונה {jc.junction_object}…"):
+                rows = _cached_read(schema.input_sheet_id, schema.input_tab)
+                columns_a = adapt_columns(schema, jc.object_a, rows)
+                records_a = split_object(jc.object_a, rows, columns_a, data_start_row=schema.data_start_row)
+                records_a = apply_value_maps(records_a, schema)
+                records_a = apply_extra_fields(records_a, schema, jc.object_a)
+                record_dicts_a = [r.values for r in records_a]
+                id_cfg_a = schema.identity.get(jc.object_a, IdentityConfig())
+                db_tab_a = schema.db_tabs.get(jc.object_a, "")
+                db_rows_a = _cached_read(schema.db_sheet_id, db_tab_a) if db_tab_a else []
+                db_recs_a = rows_to_dicts(db_rows_a)
+                dedup_a = deduplicate(
+                    record_dicts_a, id_cfg_a.mechanisms or [], db_recs_a,
+                    digits_only_fields=schema.digits_only_fields,
+                    local_key_prefix=jc.object_a[:1].upper(),
+                    dedup_internal=id_cfg_a.dedup_internal,
+                )
+
+                columns_b = adapt_columns(schema, jc.object_b, rows)
+                records_b = split_object(jc.object_b, rows, columns_b, data_start_row=schema.data_start_row)
+                records_b = apply_value_maps(records_b, schema)
+                records_b = apply_extra_fields(records_b, schema, jc.object_b)
+                record_dicts_b = [r.values for r in records_b]
+                id_cfg_b = schema.identity.get(jc.object_b, IdentityConfig())
+                db_tab_b = schema.db_tabs.get(jc.object_b, "")
+                db_rows_b = _cached_read(schema.db_sheet_id, db_tab_b) if db_tab_b else []
+                db_recs_b = rows_to_dicts(db_rows_b)
+                dedup_b = deduplicate(
+                    record_dicts_b, id_cfg_b.mechanisms or [], db_recs_b,
+                    digits_only_fields=schema.digits_only_fields,
+                    local_key_prefix=jc.object_b[:1].upper(),
+                    dedup_internal=id_cfg_b.dedup_internal,
+                )
+
+                jnc_tab = schema.db_tabs.get(jc.junction_object, "")
+                jnc_db_rows = _cached_read(schema.db_sheet_id, jnc_tab) if jnc_tab else []
+                jnc_db_recs = rows_to_dicts(jnc_db_rows)
+                db_pairs = db_junction_pairs_from_records(jnc_db_recs, jc)
+
+                junction_records = derive_junctions(
+                    rows, columns_a,
+                    records_a, dedup_a,
+                    records_b, dedup_b,
+                    id_map_a, id_map_b,
+                    db_pairs,
+                    config=jc,
+                    data_start_row=schema.data_start_row,
+                )
+
+                grid, cell_colors = build_junction_grid(junction_records, jc)
+                grid = _apply_id_conversion_to_grid(grid)
+                ensure_tab(schema.input_sheet_id, OUTPUT_TAB(jc.junction_object))
+                write_grid(schema.input_sheet_id, OUTPUT_TAB(jc.junction_object), grid)
+
+                n_created = sum(1 for r in junction_records if not r.exists_in_db and not r.warning)
+                n_exists = sum(1 for r in junction_records if r.exists_in_db)
+                n_warnings = sum(1 for r in junction_records if r.warning)
+                st.session_state[f"build_junction_{jc.junction_object}"] = {
+                    "created": n_created, "exists": n_exists, "warnings": n_warnings,
+                }
+                _clear_read_cache()
+
+                if n_warnings:
+                    st.warning(f"⚠️ {n_warnings} אזהרות — ייתכן שחלק מה-Ids חסרים.")
+                st.success(f"✅ {jc.junction_object} נכתב ל-{OUTPUT_TAB(jc.junction_object)}")
+                st.rerun()
 
 
 def _render_manual_panel(schema, obj: str, build_result) -> None:
-    pass  # Task 8
+    from modules.output_writer import parse_manual_choices, build_contacts_grid, build_manual_grid
+    from modules.sheets_io import rows_to_dicts, write_grid, ensure_tab
+    from modules.splitter import split_object
+    from modules.dedup_engine import deduplicate
+    from config.runtime_schema import IdentityConfig
+
+    with st.expander(f"⚠️ טיפול ידני — {build_result.counts.get('ambiguous', 0)} ריבוי-התאמות"):
+        st.caption(f"פתח את לשונית «{OUTPUT_TAB_MANUAL(obj)}» בגיליון, סמן ✓ לכל שורת-מקור, ואז לחץ 'קלוט בחירות'.")
+        if st.button("קלוט בחירות ידניות", key=f"manual_apply_{obj}"):
+            manual_rows = _cached_read(schema.input_sheet_id, OUTPUT_TAB_MANUAL(obj))
+            manual_choices, warnings = parse_manual_choices(manual_rows)
+            for w in warnings:
+                st.warning(w)
+            if not manual_choices:
+                st.warning("לא נמצאו בחירות (✓). סמן שורה בלשונית הידנית קודם.")
+                return
+
+            rows = _cached_read(schema.input_sheet_id, schema.input_tab)
+            columns = adapt_columns(schema, obj, rows)
+            records = split_object(obj, rows, columns, schema.data_start_row)
+            records = apply_value_maps(records, schema)
+            records = apply_extra_fields(records, schema, obj)
+            record_dicts = [r.values for r in records]
+            source_rows = [r.source_row for r in records]
+
+            db_tab = schema.db_tabs.get(obj, "")
+            db_rows = _cached_read(schema.db_sheet_id, db_tab) if db_tab else []
+            db_recs = rows_to_dicts(db_rows)
+            db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
+            id_cfg = schema.identity.get(obj, IdentityConfig())
+            mechanisms = id_cfg.mechanisms or []
+
+            result = deduplicate(
+                record_dicts, mechanisms, db_recs,
+                digits_only_fields=schema.digits_only_fields,
+                local_key_prefix=obj[:1].upper(),
+                dedup_internal=id_cfg.dedup_internal,
+            )
+
+            grid, cell_colors = build_contacts_grid(
+                result, record_dicts, columns, db_by_id,
+                object_api=obj,
+                manual_choices=manual_choices,
+            )
+            grid = _apply_id_conversion_to_grid(grid)
+
+            ensure_tab(schema.input_sheet_id, OUTPUT_TAB(obj))
+            write_grid(schema.input_sheet_id, OUTPUT_TAB(obj), grid)
+
+            manual_grid, manual_colors = build_manual_grid(
+                result, record_dicts, columns, db_by_id, source_rows,
+                object_api=obj,
+                marked=manual_choices,
+                digits_only_fields=schema.digits_only_fields,
+            )
+            ensure_tab(schema.input_sheet_id, OUTPUT_TAB_MANUAL(obj))
+            write_grid(schema.input_sheet_id, OUTPUT_TAB_MANUAL(obj), manual_grid)
+
+            st.session_state[f"build_{obj}"] = result
+            _clear_read_cache()
+            st.success("✅ בחירות קולטו — גריד הפלט עודכן.")
+            st.rerun()
 
 
 def _render_unkeyed_panel(schema, obj: str, build_result) -> None:
-    pass  # Task 9
+    n = build_result.counts.get("unkeyed", 0)
+    with st.expander(f"⬜ ללא-זיהוי — {n} רשומות"):
+        total = len(build_result.persons) if hasattr(build_result, "persons") else 1
+        if total > 0 and n > total * 0.5:
+            st.error(f"⚠️ {n} מתוך {total} רשומות ללא-זיהוי — ייתכן ששדה-מפתח לא מופה.")
+        st.caption("רשומות אלה אין להם מפתח-זיהוי. ניתן להוסיף מנגנון זיהוי או לטעון כחדשות.")
+        c1, c2 = st.columns(2)
+        if c1.button("🔧 הוסף מנגנון זיהוי", key=f"unkeyed_goto_identity_{obj}"):
+            st.session_state["step"] = 3
+            st.rerun()
+        if c2.button("📥 טען כחדשות (Insert)", key=f"unkeyed_insert_{obj}"):
+            st.info("רשומות ללא-זיהוי יטענו כ-Insert. לחץ 'בנה' שוב לעדכון הגריד.")
 
 
 def _render_paste_back(schema, obj: str) -> None:
-    pass  # Task 11
+    with st.expander("📋 הכנס Ids שחזרו מהטעינה"):
+        st.caption(
+            "1. טען את הלשונית ב-Salesforce Inspector  \n"
+            "2. Inspector יוסיף עמודת `Id`  \n"
+            "3. לחץ 'קלוט Ids' — junctions ישוחררו"
+        )
+        if st.button("קלוט Ids שחזרו", key=f"paste_back_{obj}"):
+            out_rows = _cached_read(schema.input_sheet_id, OUTPUT_TAB(obj))
+            id_map = read_ids_from_output_tab(out_rows)
+            if not id_map:
+                st.warning(f"לא נמצאה עמודת Id בלשונית «{OUTPUT_TAB(obj)}». ודא שטענת דרך Inspector.")
+            else:
+                st.session_state[f"id_map_{obj}"] = id_map
+                st.success(f"✅ קולטו {len(id_map)} Ids עבור {obj}.")
+                _clear_read_cache()
+                st.rerun()
 
 
 def _apply_id_conversion_to_grid(grid: list) -> list:
@@ -1194,7 +1378,12 @@ def screen_build() -> None:
     junction_apis = {jc.junction_object for jc in schema.junctions}
     all_obj_labels = {o.api_name: o.display_name for o in schema.objects}
 
-    # DB freshness warning (populated in Task 11)
+    # Compute DB age in days from the connection timestamp set in screen_step1
+    db_connected_at = st.session_state.get("db_connected_at")
+    if db_connected_at:
+        from datetime import datetime, timezone
+        db_age_days = (datetime.now(timezone.utc) - db_connected_at).total_seconds() / 86400
+        st.session_state["db_connected_age_days"] = db_age_days
     db_age = st.session_state.get("db_connected_age_days")
     if db_age and db_age > 7:
         st.warning(
