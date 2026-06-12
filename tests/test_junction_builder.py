@@ -59,7 +59,7 @@ def test_basic_junction_one_row():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], ["", ""]],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a=id_map_a, id_map_b=id_map_b,
@@ -85,7 +85,7 @@ def test_missing_side_b_id_produces_warning():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], []],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a=id_map_a, id_map_b=id_map_b,
@@ -106,7 +106,7 @@ def test_missing_side_a_id_produces_warning():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], []],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={}, id_map_b={"K1": "701xx"},
@@ -133,7 +133,7 @@ def test_control_column_false_skips_row():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=tmpl_rows,
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={"K1": "701xx"},
@@ -160,7 +160,7 @@ def test_control_column_true_includes_row():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=tmpl_rows,
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={"K1": "701xx"},
@@ -183,7 +183,7 @@ def test_control_column_hebrew_lo_skips():
     split_b = [_split(3, "K", {})]
     dedup_b = _dedup(["K1"], [[0]])
     records = junction_builder.derive_junctions(
-        tmpl_rows=tmpl_rows, columns=[],
+        tmpl_rows=tmpl_rows, _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={"K1": "701xx"},
@@ -201,7 +201,7 @@ def test_exists_in_db_flagged():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], []],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={"K1": "701xx"},
@@ -223,7 +223,7 @@ def test_symmetric_db_check_both_orders():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], []],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003bb"}, id_map_b={"C2": "003aa"},
@@ -242,7 +242,7 @@ def test_row_without_side_b_block_skipped():
 
     records = junction_builder.derive_junctions(
         tmpl_rows=[[], [], [], []],
-        columns=[],
+        _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={},
@@ -266,7 +266,7 @@ def test_field_mappings_extracted():
     dedup_b = _dedup(["K1"], [[0]])
 
     records = junction_builder.derive_junctions(
-        tmpl_rows=tmpl_rows, columns=[],
+        tmpl_rows=tmpl_rows, _columns=[],
         split_a=split_a, dedup_a=dedup_a,
         split_b=split_b, dedup_b=dedup_b,
         id_map_a={"C1": "003xx"}, id_map_b={"K1": "701xx"},

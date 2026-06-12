@@ -45,7 +45,7 @@ def _is_active(value: str) -> bool:
 
 def derive_junctions(
     tmpl_rows: list[list[str]],
-    columns: list,  # list[mapper.TemplateColumn] — unused in P5; reserved for P6
+    _columns: list,  # list[mapper.TemplateColumn] — reserved for P6 field extraction
     split_a: list[splitter.SplitRecord],
     dedup_a: dedup_engine.DedupResult,
     split_b: list[splitter.SplitRecord],
