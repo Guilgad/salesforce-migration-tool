@@ -67,3 +67,79 @@ def adapt_columns(schema, object_api: str, header_rows: list) -> list[TemplateCo
         ))
 
     return sorted(result, key=lambda tc: tc.index)
+
+
+# ── Value-map application ─────────────────────────────────────────────────────
+
+def apply_value_maps(records, schema) -> list:
+    """
+    Translate field values according to schema.value_maps.
+
+    For each SplitRecord, for each field that has a ValueMap (looked up via
+    schema.mappings col_index → field_api), apply the map using ValueMap.apply().
+    Returns a new list of SplitRecords (originals are not mutated).
+    """
+    from modules.splitter import SplitRecord
+
+    # Build {field_api: ValueMap} from the col_index-keyed dicts
+    vm_by_field: dict[str, object] = {}
+    for col_index, vm in schema.value_maps.items():
+        cm = schema.mappings.get(col_index)
+        if cm and cm.field_api:
+            vm_by_field[cm.field_api] = vm
+
+    if not vm_by_field:
+        return list(records)
+
+    result = []
+    for rec in records:
+        new_values = dict(rec.values)
+        for field_api, val in rec.values.items():
+            vm = vm_by_field.get(field_api)
+            if vm is None:
+                continue
+            translated, found = vm.apply(val)
+            if found:
+                new_values[field_api] = translated
+            elif not found and translated and val:
+                # default exists and value is non-empty
+                new_values[field_api] = translated
+        result.append(SplitRecord(
+            object_api=rec.object_api,
+            block=rec.block,
+            source_row=rec.source_row,
+            values=new_values,
+        ))
+    return result
+
+
+# ── Extra-fields application ──────────────────────────────────────────────────
+
+def apply_extra_fields(records, schema, object_api: str) -> list:
+    """
+    Inject constant ExtraField values into each SplitRecord for the given object.
+
+    Returns a new list of SplitRecords (originals are not mutated).
+    If no ExtraFields match object_api, returns the records list unchanged.
+    """
+    from modules.splitter import SplitRecord
+
+    extras = {
+        ef.field_api: ef.constant_value
+        for ef in schema.extra_fields
+        if ef.object_api == object_api
+    }
+
+    if not extras:
+        return records
+
+    result = []
+    for rec in records:
+        new_values = {**rec.values, **extras}
+        result.append(SplitRecord(
+            object_api=rec.object_api,
+            block=rec.block,
+            source_row=rec.source_row,
+            values=new_values,
+        ))
+    return result

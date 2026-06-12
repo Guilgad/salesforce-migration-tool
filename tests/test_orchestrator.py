@@ -79,3 +79,63 @@ def test_adapt_columns_sorted_by_index():
 def test_output_tab_name_convention():
     assert OUTPUT_TAB("Contact") == "פלט - Contact"
     assert OUTPUT_TAB_MANUAL("Contact") == "פלט ידני - Contact"
+
+
+# ── apply_value_maps + apply_extra_fields ─────────────────────────────────────
+
+from modules.orchestrator import apply_value_maps, apply_extra_fields
+from modules.splitter import SplitRecord
+from config.runtime_schema import ValueMap, ValueMapEntry, ExtraField
+
+
+def _make_record(field_values: dict, object_api="Contact"):
+    return SplitRecord(object_api=object_api, block="1", source_row=3, values=field_values)
+
+
+def test_apply_value_maps_translates_value():
+    s = RuntimeSchema()
+    s.mappings = {0: ColumnMapping(col_index=0, object_api="Contact", field_api="LeadSource",
+                                   role=ROLE_FIELD, status=ST_OK, instance=1)}
+    s.value_maps = {0: ValueMap(entries=[
+        ValueMapEntry(source="אינטרנט", target="Web"),
+    ])}
+    records = [_make_record({"LeadSource": "אינטרנט"})]
+    result = apply_value_maps(records, s)
+    assert result[0].values["LeadSource"] == "Web"
+
+
+def test_apply_value_maps_uses_default_for_unmatched():
+    s = RuntimeSchema()
+    s.mappings = {0: ColumnMapping(col_index=0, object_api="Contact", field_api="LeadSource",
+                                   role=ROLE_FIELD, status=ST_OK, instance=1)}
+    s.value_maps = {0: ValueMap(entries=[], default="Other")}
+    records = [_make_record({"LeadSource": "unknown_val"})]
+    result = apply_value_maps(records, s)
+    assert result[0].values["LeadSource"] == "Other"
+
+
+def test_apply_value_maps_passthrough_when_no_map():
+    s = RuntimeSchema()
+    s.mappings = {}
+    s.value_maps = {}
+    records = [_make_record({"LeadSource": "Web"})]
+    result = apply_value_maps(records, s)
+    assert result[0].values["LeadSource"] == "Web"
+
+
+def test_apply_extra_fields_adds_constant():
+    s = RuntimeSchema()
+    s.extra_fields = [ExtraField(object_api="Contact", field_api="LeadSource",
+                                 constant_value="Web")]
+    records = [_make_record({"FirstName": "Alice"})]
+    result = apply_extra_fields(records, s, "Contact")
+    assert result[0].values["LeadSource"] == "Web"
+
+
+def test_apply_extra_fields_skips_other_object():
+    s = RuntimeSchema()
+    s.extra_fields = [ExtraField(object_api="Campaign", field_api="Status",
+                                 constant_value="Active")]
+    records = [_make_record({"FirstName": "Alice"}, object_api="Contact")]
+    result = apply_extra_fields(records, s, "Contact")
+    assert "Status" not in result[0].values
