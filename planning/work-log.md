@@ -78,3 +78,7 @@ tags:
 | 2026-06-12 | תכנון-v2 | **תוכנית מימוש P3** — מנגנוני-זיהוי פר-אובייקט. Tasks: IdentityConfig dataclass (`mechanisms` + `dedup_internal=False`), `identity`+`extra_objects` ב-RuntimeSchema, `screen_identity()` (טאב פר-אובייקט, multiselect מדורג, טוגל כבוי, הוסף-אובייקט). ראה [[תוכנית מימוש P3]]. |
 | 2026-06-12 | מימוש-v2 | **P3 Task 1 — IdentityConfig:** `IdentityConfig(mechanisms, dedup_internal=False)` ב-`config/runtime_schema.py` + `identity`/`extra_objects` ב-`RuntimeSchema`. commit `07ddd50`. |
 | 2026-06-12 | מימוש-v2 | **P3 Task 2 — screen_identity():** טאב פר-אובייקט (נטענים + "🔍 זיהוי בלבד"), multiselect מדורג ממוספר (עד 5), 🗑️ מחיקה, טוגל dedup (כבוי), הוסף-אובייקט מהמילון. 3 AppTest smoke tests. **193 בדיקות, 0 כשלים.** **P3 הושלם.** commit `a4da173`. |
+| 2026-06-12 | מימוש-v2 | **P4 Task 2 — _load_order():** טופולוגי-סדר עצמים לפי Lookup-dependencies. פונקציה ב-`main.py` + 3 יחידת-בדיקות ב-`test_runtime_schema.py` (ללא-lookups, עם-lookup, שרשרת). כל המקרים: מנגנון topological עם guard-cycle (תרחיש כללי לא-צפוי בנתוני-לקוח אך בטוח). **199 בדיקות, 0 כשלים.** commit `67619a6`.
+| 2026-06-12 | impl-v2 | **P4 Task 1:** LookupConfig dataclass + lookups field on RuntimeSchema. commit 7824583.
+| 2026-06-12 | impl-v2 | **P4 Task 2:** _load_order() topological sort on Lookup dependency graph. commit 67619a6.
+| 2026-06-12 | impl-v2 | **P4 Task 3 + P4 complete:** screen_lookups() — add/delete Lookups + load order tiers display. 203 tests green. commit 16b59aa. |
