@@ -116,7 +116,7 @@ def test_schema_mapping_fields_default_empty():
     assert s.multi_instance == {}
 
 
-from config.runtime_schema import IdentityConfig
+from config.runtime_schema import IdentityConfig, LookupConfig
 
 
 def test_identity_config_defaults():
@@ -135,3 +135,33 @@ def test_schema_identity_fields_default_empty():
     s = RuntimeSchema()
     assert s.identity == {}
     assert s.extra_objects == []
+
+
+# ── Task 1: LookupConfig ──────────────────────────────────────────────────────
+
+def test_lookup_config_defaults():
+    lc = LookupConfig(
+        source_object="Contact",
+        source_col_index=3,
+        target_object="Account",
+        target_field="AccountId",
+        identified_by=["Name"],
+    )
+    assert lc.source_object == "Contact"
+    assert lc.source_col_index == 3
+    assert lc.target_object == "Account"
+    assert lc.target_field == "AccountId"
+    assert lc.identified_by == ["Name"]
+
+
+def test_runtime_schema_lookups_default_empty():
+    schema = RuntimeSchema()
+    assert schema.lookups == []
+
+
+def test_runtime_schema_lookups_stored():
+    lc = LookupConfig("Contact", 3, "Account", "AccountId", ["Name"])
+    schema = RuntimeSchema()
+    schema.lookups.append(lc)
+    assert len(schema.lookups) == 1
+    assert schema.lookups[0].target_field == "AccountId"

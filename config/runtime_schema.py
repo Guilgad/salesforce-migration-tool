@@ -62,6 +62,16 @@ class IdentityConfig:
 
 
 @dataclass
+class LookupConfig:
+    """Lookup configuration (Task 1 / P4): resolve target record by identity."""
+    source_object: str
+    source_col_index: int
+    target_object: str       # api_name of target (loaded or extra_objects)
+    target_field: str        # field on source record to fill (e.g. "AccountId")
+    identified_by: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ExtraField:
     """שדה-יעד ללא עמודת-מקור — ערך קבוע לכל הרשומות (למשל LeadSource)."""
     object_api: str
@@ -116,3 +126,6 @@ class RuntimeSchema:
     # ── Step-3 identity state ─────────────────────────────────────────────────
     identity: dict[str, IdentityConfig] = field(default_factory=dict)  # {object_api: …}
     extra_objects: list[str] = field(default_factory=list)             # זיהוי-בלבד (לא נטענים)
+
+    # ── Step 4: Lookups ───────────────────────────────────────────────────────
+    lookups: list[LookupConfig] = field(default_factory=list)
