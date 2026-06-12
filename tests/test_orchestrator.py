@@ -167,3 +167,37 @@ def test_id_15_checksum_correct():
     result = convert_id_15_to_18("001000000000001")
     assert len(result) == 18
     assert result.startswith("001000000000001")
+
+
+# ── read_ids_from_output_tab ──────────────────────────────────────────────────
+
+from modules.orchestrator import read_ids_from_output_tab
+
+
+def test_read_ids_from_output_tab_basic():
+    rows = [
+        ["שם פרטי", "מפתח", "נמצא לפי", "Id"],
+        ["FirstName", "local_key", "", "Id"],
+        ["Alice", "C1", "1", "001abc000000001AAA"],
+        ["Bob",   "C2", "",  "001abc000000002AAA"],
+    ]
+    result = read_ids_from_output_tab(rows)
+    assert result == {"C1": "001abc000000001AAA", "C2": "001abc000000002AAA"}
+
+
+def test_read_ids_skips_empty_id():
+    rows = [
+        ["מפתח", "Id"],
+        ["local_key", "Id"],
+        ["C1", "001abc000000001AAA"],
+        ["C2", ""],
+    ]
+    result = read_ids_from_output_tab(rows)
+    assert "C2" not in result
+    assert result["C1"] == "001abc000000001AAA"
+
+
+def test_read_ids_missing_column_returns_empty():
+    rows = [["שם"], ["FirstName"], ["Alice"]]
+    result = read_ids_from_output_tab(rows)
+    assert result == {}

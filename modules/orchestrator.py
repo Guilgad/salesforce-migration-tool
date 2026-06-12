@@ -163,3 +163,27 @@ def convert_id_15_to_18(id_val):
                 flags += 1 << pos
         suffix += _SF_CHARS[flags]
     return id_val + suffix
+
+
+# ── Read Salesforce Ids from a written output tab ────────────────────────────
+
+LOCAL_KEY_HEADER = "local_key"   # API header written by output_writer._DISPLAY_COLUMNS
+SF_ID_HEADER = "Id"              # API header written by output_writer._ID_COLUMN
+
+
+def read_ids_from_output_tab(rows: list) -> dict:
+    """Parse re-read output tab → {local_key: sf_id}. Expects 2 header rows then data."""
+    if len(rows) < 2:
+        return {}
+    api_headers = rows[1]
+    key_col = next((i for i, h in enumerate(api_headers) if h == LOCAL_KEY_HEADER), None)
+    id_col = next((i for i, h in enumerate(api_headers) if h == SF_ID_HEADER), None)
+    if key_col is None or id_col is None:
+        return {}
+    result = {}
+    for row in rows[2:]:
+        key = row[key_col] if key_col < len(row) else ""
+        sf_id = row[id_col] if id_col < len(row) else ""
+        if key and sf_id:
+            result[key] = sf_id
+    return result
