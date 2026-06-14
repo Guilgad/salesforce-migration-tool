@@ -96,8 +96,11 @@ def parse_field_dictionary(
         )
 
     warnings: list[str] = []
+    # השוואה case-insensitive: Salesforce מחזיר QualifiedApiName באות-קאנונית (Contact),
+    # והמשתמש עשוי לבקש באותיות אחרות (contact). אותו אובייקט — לא אזהרת-שווא.
+    have = {k.casefold() for k in objects}
     for req in requested_objects or []:
-        if req not in objects:
+        if req.casefold() not in have:
             warnings.append(
                 f"ביקשת את '{req}' בשלב 1, אך לא חזרו עבורו שדות — בדוק את שם-ה-API או שהרצת עליו."
             )

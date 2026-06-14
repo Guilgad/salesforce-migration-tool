@@ -406,6 +406,10 @@ def screen_step1() -> None:
         st.subheader("שאילתות ל-Inspector")
         _screen_queries()
 
+    connected = sum(bool(x) for x in (
+        schema.input_sheet_id, schema.fielddict_sheet_id, schema.db_sheet_id))
+    _set_status(1, "done" if connected == 3 else "pending")
+
 
 # ─── step 2: mapping ──────────────────────────────────────────────────────────
 
@@ -605,6 +609,13 @@ def screen_mapping() -> None:
         return
 
     columns = schema_reader.read_header_columns(input_rows, schema)
+    # יישור אות: שם-האובייקט בקלט (contact) עשוי להיות שונה מהקאנון של Salesforce
+    # (Contact). מיישרים לאות-המילון כדי שכל החיפושים (טאבים/auto-map) יתאימו.
+    _canon = {k.casefold(): k for k in dictionary}
+    for c in columns:
+        canon = _canon.get((c.object_api or "").casefold())
+        if canon:
+            c.object_api = canon
     _ensure_mappings(columns, dictionary)
 
     # סיכום-נוריות + סטטוס לסרגל
