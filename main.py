@@ -424,11 +424,14 @@ def _field_dict_result():
     rows = st.session_state.get("fielddict_rows")
     if not rows:
         return None
+    # מפתח-מטמון כולל את רשימת-האובייקטים — אחרת אזהרת "לא חזרו שדות" נתקעת
+    # מפירוק קודם גם אחרי שהבחירה השתנתה.
+    key = (id(rows), tuple(schema.fielddict_objects))
     cached = st.session_state.get("_fd_cache")
-    if cached is not None and cached[0] is rows:
+    if cached is not None and cached[0] == key:
         return cached[1]
     result = field_dictionary.parse_field_dictionary(rows, schema.fielddict_objects)
-    st.session_state["_fd_cache"] = (rows, result)
+    st.session_state["_fd_cache"] = (key, result)
     return result
 
 
