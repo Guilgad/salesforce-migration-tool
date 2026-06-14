@@ -594,6 +594,28 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False) -> No
         ))
 
 
+def _block_occurrences(columns, raw_row0: list) -> dict[int, int]:
+    """
+    מספר-מופע פר-עמודה לפי בלוקי שורת-האובייקט: כל הופעה מפורשת של שם-אובייקט
+    (תא לא-ריק בשורה 0) = בלוק חדש → מופע +1 לאותו אובייקט. עמודות שביניהן
+    (תאים ממוזגים/ריקים) יורשות את מספר-הבלוק הנוכחי. כך בעל=מופע 1, אישה=מופע 2.
+    """
+    occ: dict[int, int] = {}
+    run_count: dict[str, int] = {}
+    cur_run: dict[str, int] = {}
+    for c in sorted(columns, key=lambda x: x.index):
+        raw = ""
+        if c.index < len(raw_row0) and raw_row0[c.index] is not None:
+            raw = str(raw_row0[c.index]).strip()
+        o = c.object_api
+        if o and raw:                       # כותרת-בלוק מפורשת → בלוק חדש
+            run_count[o] = run_count.get(o, 0) + 1
+            cur_run[o] = run_count[o]
+        if o:
+            occ[c.index] = cur_run.get(o, 1)
+    return occ
+
+
 def screen_mapping() -> None:
     """שלב 2 — מיפוי עמודות-הלקוח לשדות סיילספורס."""
     input_rows = st.session_state.get("input_rows")
@@ -666,6 +688,24 @@ def screen_mapping() -> None:
                 key=f"multi_{obj}",
             )
             schema.multi_instance[obj] = multi
+
+            # מופע-אוטומטי לפי בלוקים: סימון "מופיע יותר מפעם אחת" → מספור בלוקים
+            # (1,2,…) כברירת-מחדל. נזרע פעם אחת לכל מצב-כותרות; המשתמש משנה פר-עמודה.
+            _seed_key = f"_inst_seeded_{obj}"
+            _fp = st.session_state.get("_map_fp")
+            if multi and st.session_state.get(_seed_key) != _fp:
+                _occ = _block_occurrences(columns, input_rows[schema.object_row])
+                for c in obj_cols:
+                    mm = schema.mappings.get(c.index)
+                    if mm and mm.role == ROLE_FIELD:
+                        mm.instance = _occ.get(c.index, 1)
+                st.session_state[_seed_key] = _fp
+            elif not multi and _seed_key in st.session_state:
+                del st.session_state[_seed_key]
+                for c in obj_cols:
+                    mm = schema.mappings.get(c.index)
+                    if mm:
+                        mm.instance = 1
 
             titles = ["עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס",
                       "דוגמה → אחרי", "מפה"] + (["מופע"] if multi else [])
