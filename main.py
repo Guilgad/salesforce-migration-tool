@@ -970,6 +970,19 @@ def screen_mapping() -> None:
 _N_MECHANISMS = 5
 
 
+import re as _re
+# שדות שסביר שמכילים מספר עם תווי-עיצוב (טלפון/ת״ז) — מועמדים לנירמול-ספרות.
+# שמרני בכוונה: לא תופס שדות-Id של Lookup (AccountId/ContactId — מזהי-SF, לא לנרמל).
+_DIGIT_FIELD_RE = _re.compile(
+    r"phone|mobile|fax|\btel\b|id_number|id_num|תז|ת\"ז|טלפון|נייד", _re.IGNORECASE
+)
+
+
+def _guess_digit_fields(pool: list[str]) -> list[str]:
+    """ניחוש ראשוני: שמות-שדה שנראים כמו טלפון/ת״ז → מועמדים לנירמול-ספרות."""
+    return [f for f in pool if _DIGIT_FIELD_RE.search(f or "")]
+
+
 def screen_identity() -> None:
     """שלב 3 — מנגנוני-זיהוי מדורגים פר-אובייקט + טוגל-dedup + הוסף-אובייקט."""
     fd = _field_dict_result()
@@ -1005,7 +1018,14 @@ def screen_identity() -> None:
         "אותם מנגנונים משמשים גם לזיהוי מול ה-DB וגם ליישוב Lookups."
     )
 
+    # זריעה חד-פעמית של שדות-נירמול-ספרות מניחוש-שמות (טלפון/ת״ז)
+    if not st.session_state.get("_digits_seeded"):
+        for obj in all_objs:
+            schema.digits_only_fields |= set(_guess_digit_fields(pools.get(obj, [])))
+        st.session_state["_digits_seeded"] = True
+
     done_all = bool(loaded)
+    digit_sel: dict[str, list[str]] = {}
     tabs = st.tabs([o if o in loaded else f"{o} 🔍" for o in all_objs])
     for tab, obj in zip(tabs, all_objs):
         with tab:
@@ -1051,6 +1071,19 @@ def screen_identity() -> None:
                 st.caption("ללא מנגנון — כל השורות ייטענו כחדשות (Insert), ללא הצלבה מול ה-DB.")
             if obj in loaded and not active:
                 done_all = False
+
+            if pool:
+                digit_sel[obj] = st.multiselect(
+                    "שדות לנירמול-ספרות (טלפון/ת״ז)",
+                    options=pool,
+                    default=[f for f in pool if f in schema.digits_only_fields],
+                    key=f"digits_{obj}",
+                    help="בהשוואת-זיהוי, שדות אלה מושווים ספרות-בלבד "
+                         "(050-1 = 0501). לא משנה את הדאטה הנטענת.",
+                )
+
+    # איחוד בחירות-הספרות מכל הטאבים → קבוצה שטוחה אחת על הסכמה
+    schema.digits_only_fields = set().union(*digit_sel.values()) if digit_sel else set()
 
     with st.expander("➕ הוסף אובייקט (זיהוי בלבד — יעד Lookup שלא נטען)"):
         avail = [o for o in dictionary if o not in all_objs]

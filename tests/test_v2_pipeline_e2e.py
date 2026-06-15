@@ -102,3 +102,50 @@ def test_empty_db_makes_everything_insert():
     out = build_object_core(_contact_schema(), "Contact", _input_rows(), [])
     yossi = _row_by_idnum(out, "111")
     assert yossi["Id"] == ""  # בלי DB — אין Upsert (זה היה הבאג בייצור)
+
+
+# ── digits_only_fields wiring (צעד 2) ────────────────────────────────────────
+
+def _phone_schema(digits: bool) -> RuntimeSchema:
+    """Schema לזיהוי-Contact לפי טלפון; digits=True → השדה בנירמול-ספרות."""
+    s = RuntimeSchema()
+    s.mappings = {
+        0: ColumnMapping(col_index=0, object_api="Contact", field_api="MobilePhone",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+    }
+    s.identity = {"Contact": IdentityConfig(mechanisms=[["MobilePhone"]])}
+    s.digits_only_fields = {"MobilePhone"} if digits else set()
+    s.db_sheet_id = "db"
+    s.db_tabs = {"Contact": "Contact"}
+    s.input_sheet_id = "in"
+    s.input_tab = "data"
+    return s
+
+
+def _phone_rows() -> list:
+    return [
+        ["Contact"],
+        ["נייד"],
+        ["MobilePhone"],
+        ["050-1234567"],   # אותו מספר כמו ב-DB, פורמט שונה
+    ]
+
+
+def _phone_db() -> list:
+    return [{"Id": _DB_ID, "MobilePhone": "0501234567"}]
+
+
+def test_digits_only_field_matches_across_formats():
+    """כשהשדה ב-digits_only — '050-1234567' מתאים ל-'0501234567' שב-DB → Upsert."""
+    out = build_object_core(_phone_schema(digits=True), "Contact", _phone_rows(), _phone_db())
+    data = out.grid[2]
+    id_col = out.grid[1].index("Id")
+    assert data[id_col] == _DB_ID  # ← נירמול-ספרות אִפשר את ההתאמה
+
+
+def test_without_digits_only_formats_do_not_match():
+    """בקרה: בלי digits_only, הפורמטים שונים → אין התאמה → Insert (Id ריק)."""
+    out = build_object_core(_phone_schema(digits=False), "Contact", _phone_rows(), _phone_db())
+    data = out.grid[2]
+    id_col = out.grid[1].index("Id")
+    assert data[id_col] == ""  # פורמט שונה ללא נירמול → לא מתאים
