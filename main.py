@@ -1587,8 +1587,14 @@ def _run_build_pipeline(schema: "RuntimeSchema", obj: str) -> None:
         db_recs = sheets_io.rows_to_dicts(db_rows)
         db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
 
-        # Pure, integration-tested core (split → maps → dedup → grid → 15→18).
-        out = build_object_core(schema, obj, rows, db_recs)
+        def _lookup_db(target_api: str) -> list:
+            """רשומות-DB של אובייקט-יעד-Lookup (לפי db_tabs / התאמת-שם)."""
+            t_tab = _db_tab_for(target_api)
+            t_rows = _cached_read(schema.db_sheet_id, t_tab) if t_tab else []
+            return sheets_io.rows_to_dicts(t_rows)
+
+        # Pure, integration-tested core (split → maps → lookups → dedup → grid → 15→18).
+        out = build_object_core(schema, obj, rows, db_recs, lookup_db_provider=_lookup_db)
         grid = out.grid
         result = out.result
         record_dicts = out.record_dicts
@@ -1618,6 +1624,13 @@ def _run_build_pipeline(schema: "RuntimeSchema", obj: str) -> None:
         st.session_state[f"loaded_{obj}"] = True
 
     st.success(f"✅ {obj} נכתב ל-{OUTPUT_TAB(obj)}")
+    ls = out.lookup_stats
+    if ls.get("resolved") or ls.get("unresolved"):
+        st.session_state[f"lookup_stats_{obj}"] = ls
+        msg = f"🔗 Lookups: {ls['resolved']} נפתרו"
+        if ls["unresolved"]:
+            msg += f" · ⚠️ {ls['unresolved']} לא נמצאו (Id ריק — בדוק שם/DB-יעד)"
+        st.caption(msg)
     st.info("טענת ל-Salesforce — ה-DB לא משקף עוד את המצב האמיתי. רענן לפני הפעם הבאה.")
     st.rerun()
 

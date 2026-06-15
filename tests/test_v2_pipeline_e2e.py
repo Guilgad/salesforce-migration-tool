@@ -11,7 +11,8 @@ insert מול upsert, ו-backfill מה-DB.
 `test_empty_db_makes_everything_insert` שמנעיל את ההתנהגות בשני הכיוונים.
 """
 from config.runtime_schema import (
-    RuntimeSchema, ColumnMapping, IdentityConfig, ROLE_FIELD, ST_OK,
+    RuntimeSchema, ColumnMapping, IdentityConfig, ExtraField, LookupConfig,
+    ROLE_FIELD, ST_OK,
 )
 from modules.orchestrator import build_object_core
 
@@ -149,3 +150,60 @@ def test_without_digits_only_formats_do_not_match():
     data = out.grid[2]
     id_col = out.grid[1].index("Id")
     assert data[id_col] == ""  # פורמט שונה ללא נירמול → לא מתאים
+
+
+# ── Lookups + derived columns (צעד 3) ────────────────────────────────────────
+
+def _lookup_schema() -> RuntimeSchema:
+    s = RuntimeSchema()
+    s.mappings = {
+        0: ColumnMapping(col_index=0, object_api="Contact", field_api="FirstName",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+        1: ColumnMapping(col_index=1, object_api="Contact", field_api="ID_Number__c",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+        2: ColumnMapping(col_index=2, object_api="Contact", field_api="AccountName",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+    }
+    s.identity = {"Contact": IdentityConfig(mechanisms=[["ID_Number__c"]])}
+    s.lookups = [
+        LookupConfig(source_object="Contact", source_col_index=2,
+                     target_object="Account", target_field="AccountId",
+                     identified_by=["Name"]),
+    ]
+    return s
+
+
+def _lookup_rows() -> list:
+    return [
+        ["Contact", "Contact", "Contact"],
+        ["שם", "ת״ז", "חשבון"],
+        ["FirstName", "ID_Number__c", "AccountName"],
+        ["יוסי", "111", "Acme"],
+    ]
+
+
+def test_lookup_fills_target_field_in_grid():
+    """עמודת-מקור 'Acme' → היעד AccountId מתמלא ב-Id של החשבון, ומופיע בגריד."""
+    provider = lambda t: [{"Name": "Acme", "Id": "001ACMEID"}] if t == "Account" else []
+    out = build_object_core(_lookup_schema(), "Contact", _lookup_rows(), [],
+                            lookup_db_provider=provider)
+    assert "AccountId" in out.grid[1]          # עמודה נגזרת קיימת בפלט
+    acct_col = out.grid[1].index("AccountId")
+    assert out.grid[2][acct_col] == "001ACMEID"   # מולא ב-Id מהיעד
+    assert out.lookup_stats == {"resolved": 1, "unresolved": 0}
+
+
+def test_extra_field_appears_in_grid():
+    """תיקון-בונוס: ערך-קבוע (ExtraField) הופך לעמודת-פלט (היה מוזרק ל-values אך לא לגריד)."""
+    s = RuntimeSchema()
+    s.mappings = {
+        0: ColumnMapping(col_index=0, object_api="Contact", field_api="ID_Number__c",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+    }
+    s.identity = {"Contact": IdentityConfig(mechanisms=[["ID_Number__c"]])}
+    s.extra_fields = [ExtraField("Contact", "LeadSource", "Web")]
+    rows = [["Contact"], ["ת״ז"], ["ID_Number__c"], ["111"]]
+    out = build_object_core(s, "Contact", rows, [])
+    assert "LeadSource" in out.grid[1]
+    ls_col = out.grid[1].index("LeadSource")
+    assert out.grid[2][ls_col] == "Web"

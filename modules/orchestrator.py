@@ -169,8 +169,39 @@ def convert_id_15_to_18(id_val):
 # ── Pure build core (no Streamlit, no I/O) — the integration-testable seam ───
 
 BuildOutput = namedtuple(
-    "BuildOutput", "grid cell_colors result columns record_dicts source_rows"
+    "BuildOutput", "grid cell_colors result columns record_dicts source_rows lookup_stats"
 )
+
+
+def _derived_columns(schema, object_api: str, base_columns: list) -> list:
+    """
+    עמודות-פלט נגזרות שאינן ממופות מהקלט: ערכי-ExtraField (קבועים) ושדות-יעד של Lookups.
+    בלעדיהן הערך מוזרק ל-record.values אך **לא מופיע בגריד** (`_field_columns` כולל רק
+    עמודות ממופות) — אותו שורש כמו באג ה-db_tabs. אינדקסים סינתטיים אחרי העמודות הממופות
+    (split_object לא קורא אותם — הערכים מגיעים מ-extra_fields/lookup_resolver).
+    """
+    existing = {c.clean_api for c in base_columns}
+    derived: list = []
+    next_idx = max((c.index for c in base_columns), default=-1) + 1
+
+    def _add(field_api: str):
+        nonlocal next_idx
+        if not field_api or field_api in existing:
+            return
+        derived.append(TemplateColumn(
+            index=next_idx, block="1", label=field_api, proposed_api=field_api,
+            object_api=object_api, clean_api=field_api, status=STATUS_VALID,
+        ))
+        existing.add(field_api)
+        next_idx += 1
+
+    for ef in schema.extra_fields:
+        if ef.object_api == object_api:
+            _add(ef.field_api)
+    for lc in schema.lookups:
+        if lc.source_object == object_api:
+            _add(lc.target_field)
+    return derived
 
 
 def apply_grid_id_conversion(grid: list) -> list:
@@ -186,32 +217,51 @@ def apply_grid_id_conversion(grid: list) -> list:
     ]
 
 
-def build_object_core(schema, object_api: str, input_rows: list, db_recs: list) -> "BuildOutput":
+def build_object_core(
+    schema, object_api: str, input_rows: list, db_recs: list,
+    lookup_db_provider=None,
+) -> "BuildOutput":
     """
     Pure build core: schema + input rows + DB records → BuildOutput. **No Streamlit, no I/O.**
 
     Mirrors `main._run_build_pipeline`'s transformation sequence EXACTLY (adapt_columns →
-    split_object → apply_value_maps → apply_extra_fields → deduplicate → build_contacts_grid →
-    15→18 conversion), so the full UI→schema→engines wiring — including the DB cross-reference
-    that decides insert vs upsert — can be integration-tested without a browser. This is the
-    seam that would have caught the `db_tabs` bug.
+    split_object → apply_value_maps → apply_extra_fields → resolve_lookups → deduplicate →
+    build_contacts_grid → 15→18 conversion), so the full UI→schema→engines wiring — including
+    the DB cross-reference that decides insert vs upsert — can be integration-tested without
+    a browser. This is the seam that would have caught the `db_tabs` bug.
 
-    db_recs: the DB rows for this object already resolved to dicts (caller reads them via the
-             db_tabs mapping). Empty list = no DB data → every record is a new Insert.
+    db_recs:            DB rows for THIS object as dicts (caller resolves via db_tabs).
+                        Empty list = no DB data → every record is a new Insert.
+    lookup_db_provider: callable(target_object_api) → list[dict] DB rows for a lookup target.
+                        If None, lookups are skipped (e.g. tests with no lookups).
+
+    Note: ExtraField values and Lookup target Ids are derived (not mapped from input), so they
+    are appended as synthetic output columns via _derived_columns — otherwise they live only in
+    record.values and never reach the grid.
     """
     from modules.splitter import split_object
     from modules.dedup_engine import deduplicate
     from modules.output_writer import build_contacts_grid
     from config.runtime_schema import IdentityConfig
 
-    columns = adapt_columns(schema, object_api, input_rows)
-    records = split_object(object_api, input_rows, columns, data_start_row=schema.data_start_row)
+    base_columns = adapt_columns(schema, object_api, input_rows)
+    records = split_object(object_api, input_rows, base_columns, data_start_row=schema.data_start_row)
     records = apply_value_maps(records, schema)
     records = apply_extra_fields(records, schema, object_api)
+
+    lookup_stats = {"resolved": 0, "unresolved": 0}
+    if schema.lookups and lookup_db_provider is not None:
+        from modules.lookup_resolver import resolve_lookups
+        records, lookup_stats = resolve_lookups(
+            records, object_api, schema.lookups, schema, lookup_db_provider,
+        )
 
     record_dicts = [r.values for r in records]
     source_rows = [r.source_row for r in records]
     db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
+
+    # שדות-נגזרים (extra_fields + יעדי-lookup) הופכים לעמודות-פלט
+    columns = base_columns + _derived_columns(schema, object_api, base_columns)
 
     id_cfg = schema.identity.get(object_api, IdentityConfig())
     result = deduplicate(
@@ -225,7 +275,7 @@ def build_object_core(schema, object_api: str, input_rows: list, db_recs: list) 
         result, record_dicts, columns, db_by_id, object_api=object_api,
     )
     grid = apply_grid_id_conversion(grid)
-    return BuildOutput(grid, cell_colors, result, columns, record_dicts, source_rows)
+    return BuildOutput(grid, cell_colors, result, columns, record_dicts, source_rows, lookup_stats)
 
 
 # ── Read Salesforce Ids from a written output tab ────────────────────────────
