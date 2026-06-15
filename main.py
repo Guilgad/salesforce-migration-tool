@@ -193,14 +193,32 @@ def _screen_queries() -> None:
     generated = ""
     if selected == fd_label:
         all_objects = [o.api_name for o in schema.objects]
-        default_sel = schema.fielddict_objects or all_objects
-        chosen_objs = st.multiselect(
+        saved = schema.fielddict_objects or all_objects
+        base_sel = [o for o in saved if o in set(all_objects)]
+        extra_saved = [o for o in saved if o not in set(all_objects)]
+
+        # אם session state של הבסיס ריק — נקה כדי ש-default יחזור
+        if st.session_state.get("fd_obj_select") == [] and all_objects:
+            del st.session_state["fd_obj_select"]
+
+        chosen_base = st.multiselect(
             "אובייקטים לכלול",
             options=all_objects,
-            default=[o for o in default_sel if o in all_objects],
+            default=base_sel or all_objects,
             key="fd_obj_select",
         )
-        schema.fielddict_objects = chosen_objs
+        extra_str = st.text_input(
+            "אובייקטים נוספים (פסיק בין שמות)",
+            value=", ".join(extra_saved),
+            key="fd_extra_objs",
+            placeholder="לדוגמה: CampaignMember, Relationship__c",
+        )
+        extra_typed = [
+            o.strip() for o in extra_str.split(",")
+            if o.strip() and o.strip() not in set(all_objects)
+        ]
+        chosen_objs = chosen_base + extra_typed
+        schema.fielddict_objects = chosen_objs or all_objects
         if not chosen_objs:
             st.warning("בחר לפחות אובייקט אחד.")
         generated = query_builder.build_field_definition_query(chosen_objs)
@@ -255,6 +273,20 @@ def _sheet_connector(
     tab_key = f"{role}_tab"
 
     st.markdown(f"**{label}**" + (" ✍️" if needs_write else ""))
+
+    recents = recent_sheets.recent_for(role)
+    if recents:
+        chosen_recent = st.selectbox(
+            "גיליונות אחרונים",
+            [None] + recents,
+            format_func=lambda x: "— בחר גיליון אחרון —" if x is None else x["name"],
+            key=f"{role}_recent_pick",
+            label_visibility="collapsed",
+        )
+        if chosen_recent is not None and st.session_state.get(f"{role}_url_input") != chosen_recent["id"]:
+            st.session_state[f"{role}_url_input"] = chosen_recent["id"]
+            st.rerun()
+
     col_url, col_btn = st.columns([5, 1])
 
     raw_url = col_url.text_input(
