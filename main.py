@@ -1543,42 +1543,24 @@ def _apply_id_conversion_to_grid(grid: list) -> list:
 
 
 def _run_build_pipeline(schema: "RuntimeSchema", obj: str) -> None:
-    from modules.splitter import split_object
-    from modules.dedup_engine import deduplicate
-    from modules.output_writer import build_contacts_grid, build_manual_grid
+    from modules.output_writer import build_manual_grid
+    from modules.orchestrator import build_object_core
 
     with st.spinner(f"בונה {obj}…"):
         rows = _cached_read(schema.input_sheet_id, schema.input_tab)
-        columns = adapt_columns(schema, obj, rows)
-        records = split_object(obj, rows, columns, data_start_row=schema.data_start_row)
-        records = apply_value_maps(records, schema)
-        records = apply_extra_fields(records, schema, obj)
-
-        # Convert SplitRecord list → list[dict] for dedup engine
-        record_dicts = [r.values for r in records]
-        source_rows = [r.source_row for r in records]
 
         db_tab = _db_tab_for(obj)
         db_rows = _cached_read(schema.db_sheet_id, db_tab) if db_tab else []
         db_recs = sheets_io.rows_to_dicts(db_rows)
-        # Build {Id: dict} index required by output_writer
         db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
 
-        id_cfg = schema.identity.get(obj, IdentityConfig())
-        mechanisms = id_cfg.mechanisms or []
-
-        result = deduplicate(
-            record_dicts, mechanisms, db_recs,
-            digits_only_fields=schema.digits_only_fields,
-            local_key_prefix=obj[:1].upper(),
-            dedup_internal=id_cfg.dedup_internal,
-        )
-
-        grid, cell_colors = build_contacts_grid(
-            result, record_dicts, columns, db_by_id,
-            object_api=obj,
-        )
-        grid = _apply_id_conversion_to_grid(grid)
+        # Pure, integration-tested core (split → maps → dedup → grid → 15→18).
+        out = build_object_core(schema, obj, rows, db_recs)
+        grid = out.grid
+        result = out.result
+        record_dicts = out.record_dicts
+        columns = out.columns
+        source_rows = out.source_rows
 
         gsheet = schema.input_sheet_id
         sheets_io.ensure_tab(gsheet, OUTPUT_TAB(obj))

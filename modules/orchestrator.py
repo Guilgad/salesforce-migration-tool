@@ -1,6 +1,7 @@
 """Orchestration layer: adapts RuntimeSchema → engine inputs."""
 from __future__ import annotations
 
+from collections import namedtuple
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -163,6 +164,68 @@ def convert_id_15_to_18(id_val):
                 flags += 1 << pos
         suffix += _SF_CHARS[flags]
     return id_val + suffix
+
+
+# ── Pure build core (no Streamlit, no I/O) — the integration-testable seam ───
+
+BuildOutput = namedtuple(
+    "BuildOutput", "grid cell_colors result columns record_dicts source_rows"
+)
+
+
+def apply_grid_id_conversion(grid: list) -> list:
+    """Convert any 15-char alphanumeric cell to its 18-char Salesforce Id; others unchanged."""
+    return [
+        [
+            convert_id_15_to_18(c)
+            if isinstance(c, str) and len(c) == 15 and c.isalnum()
+            else c
+            for c in row
+        ]
+        for row in grid
+    ]
+
+
+def build_object_core(schema, object_api: str, input_rows: list, db_recs: list) -> "BuildOutput":
+    """
+    Pure build core: schema + input rows + DB records → BuildOutput. **No Streamlit, no I/O.**
+
+    Mirrors `main._run_build_pipeline`'s transformation sequence EXACTLY (adapt_columns →
+    split_object → apply_value_maps → apply_extra_fields → deduplicate → build_contacts_grid →
+    15→18 conversion), so the full UI→schema→engines wiring — including the DB cross-reference
+    that decides insert vs upsert — can be integration-tested without a browser. This is the
+    seam that would have caught the `db_tabs` bug.
+
+    db_recs: the DB rows for this object already resolved to dicts (caller reads them via the
+             db_tabs mapping). Empty list = no DB data → every record is a new Insert.
+    """
+    from modules.splitter import split_object
+    from modules.dedup_engine import deduplicate
+    from modules.output_writer import build_contacts_grid
+    from config.runtime_schema import IdentityConfig
+
+    columns = adapt_columns(schema, object_api, input_rows)
+    records = split_object(object_api, input_rows, columns, data_start_row=schema.data_start_row)
+    records = apply_value_maps(records, schema)
+    records = apply_extra_fields(records, schema, object_api)
+
+    record_dicts = [r.values for r in records]
+    source_rows = [r.source_row for r in records]
+    db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
+
+    id_cfg = schema.identity.get(object_api, IdentityConfig())
+    result = deduplicate(
+        record_dicts, id_cfg.mechanisms or [], db_recs,
+        digits_only_fields=schema.digits_only_fields,
+        local_key_prefix=object_api[:1].upper(),
+        dedup_internal=id_cfg.dedup_internal,
+    )
+
+    grid, cell_colors = build_contacts_grid(
+        result, record_dicts, columns, db_by_id, object_api=object_api,
+    )
+    grid = apply_grid_id_conversion(grid)
+    return BuildOutput(grid, cell_colors, result, columns, record_dicts, source_rows)
 
 
 # ── Read Salesforce Ids from a written output tab ────────────────────────────
