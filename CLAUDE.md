@@ -44,8 +44,22 @@ modules/
   validator.py                   # data validation (dates, Id length)
   recent_sheets.py               # MRU list of recently used sheets per role
   notes_store.py                 # persist user notes across sessions (.notes.txt)
-tests/                           # pytest suite — 115 tests, 0 failures
+tests/                           # pytest suite (engine units + v2 integration)
 ```
+
+## Testing contract (v2) — חובה
+
+חוק-ברזל שנלמד בדם (באג ה-`db_tabs`/`extra_fields`): בדיקות-יחידה על פונקציות-טהורות עם
+נתונים-מוזנים-ביד **אינן** מוכיחות שהאפליקציה עובדת. הן עברו ירוקות בעוד הצלבת-ה-DB וה-extra_fields
+היו מתים לגמרי, כי אף בדיקה לא הריצה את שכבת-החיווט (UI→schema→מנועים).
+
+- **כל פיצ'ר/חיווט חדש שמשפיע על הבנייה → חייב בדיקת-אינטגרציה** שבונה `RuntimeSchema` כמו ה-UI
+  (mappings/identity/db_tabs/lookups/...) ומריצה את `orchestrator.build_object_core`, ובודקת את
+  **הפלט** (insert/upsert/backfill/עמודה-נגזרת) — לא רק "אין חריגה". ראה `tests/test_v2_pipeline_e2e.py`.
+- `orchestrator.build_object_core` הוא ה-seam הטהור (ללא Streamlit) לבדיקות כאלה. אם לוגיקה חדשה
+  חיה רק ב-`main.py`, חלץ את הליבה לשם כדי שתהיה ניתנת-לבדיקה.
+- בדיקות "renders_without_exception" מרוכזות ב-`tests/test_v2_screens_smoke.py` בלבד (גלאי-קריסות).
+  אל תוסיף עוד כאלה פר-מסך — הן ביטחון-שווא.
 
 **Wizard navigation (main.py)** — top process-bar `_topbar()` with 5 steps (click to navigate via
 `st.session_state["step"]`); per-step live status badges via `_set_status`/`_status_badge`. The

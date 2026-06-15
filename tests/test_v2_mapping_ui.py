@@ -1,49 +1,27 @@
 # tests/test_v2_mapping_ui.py
-"""AppTest — בדיקות-עשן למסך-המיפוי של v2 (שלב 2)."""
+"""מסך-המיפוי (שלב 2) — בדיקת-מצב אמיתית: מפת-ערכים משפיעה על התצוגה-המקדימה.
+
+(בדיקות ה-render-בלי-קריסה עברו ל-test_v2_screens_smoke.py.)
+"""
 from streamlit.testing.v1 import AppTest
 
-from config.runtime_schema import RuntimeSchema
+from config.runtime_schema import RuntimeSchema, ValueMap, ValueMapEntry
 
-_INPUT = [
-    ["Contact", "", "Campaign"],
-    ["שם פרטי", "אימייל", "שם קמפיין"],
+_INPUT_DATED = [
+    ["Contact", "", ""],
+    ["שם פרטי", "אימייל", "Birthdate"],
     ["", "", ""],
-    ["יוסי", "a@b.com", "כנס 2025"],
+    ["יוסי", "a@b.com", "15/03/2024"],
 ]
-_FD = [
+_FD_DATED = [
     ["EntityDefinition.QualifiedApiName", "EntityDefinition.Label",
      "Label", "QualifiedApiName", "DataType"],
-    ["Contact", "Contact", "שם פרטי", "FirstName", "Text"],
-    ["Contact", "Contact", "Email", "Email", "Email"],
-    ["Campaign", "Campaign", "Campaign Name", "Name", "Text"],
+    ["Contact", "Contact", "Birthdate", "Birthdate", "Date"],
 ]
-
-
-def _app(with_data: bool = True) -> AppTest:
-    at = AppTest.from_file("main.py")
-    at.session_state["step"] = 2
-    if with_data:
-        at.session_state["schema"] = RuntimeSchema(input_sheet_id="x", input_tab="t")
-        at.session_state["input_rows"] = _INPUT
-        at.session_state["fielddict_rows"] = _FD
-    at.run()
-    return at
-
-
-def test_mapping_screen_renders_without_exception():
-    at = _app()
-    assert not at.exception
-
-
-def test_mapping_screen_guard_without_connections():
-    at = _app(with_data=False)
-    assert not at.exception
 
 
 def test_value_map_preview_integration():
     """מפת-ערכים שמורה בסכמה משפיעה על התצוגה-המקדימה (כולל שם-תצוגה)."""
-    from config.runtime_schema import ValueMap, ValueMapEntry
-
     at = AppTest.from_file("main.py")
     at.session_state["step"] = 2
     schema = RuntimeSchema(input_sheet_id="x", input_tab="t")
@@ -58,16 +36,3 @@ def test_value_map_preview_integration():
     assert not at.exception
     caps = " ".join(c.value for c in at.caption)
     assert "MAPPED (מתורגם)" in caps
-
-
-_INPUT_DATED = [
-    ["Contact", "", ""],
-    ["שם פרטי", "אימייל", "Birthdate"],
-    ["", "", ""],
-    ["יוסי", "a@b.com", "15/03/2024"],
-]
-_FD_DATED = [
-    ["EntityDefinition.QualifiedApiName", "EntityDefinition.Label",
-     "Label", "QualifiedApiName", "DataType"],
-    ["Contact", "Contact", "Birthdate", "Birthdate", "Date"],
-]

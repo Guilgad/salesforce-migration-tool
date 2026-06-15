@@ -1,72 +1,26 @@
-"""Smoke tests for screen_lookups (step 4)."""
-import pytest
+"""מסך-קשרים (שלב 4): בדיקות-לוגיקה ל-_load_order + טענות-תוכן אמיתיות.
+
+(בדיקות ה-render-בלי-קריסה עברו ל-test_v2_screens_smoke.py.)
+"""
 from streamlit.testing.v1 import AppTest
-from config.runtime_schema import RuntimeSchema, ObjectDef, IdentityConfig, LookupConfig, JunctionConfig
+from config.runtime_schema import (
+    RuntimeSchema, ObjectDef, IdentityConfig, LookupConfig, JunctionConfig,
+)
 import main as main_module
 
 
-BASE_SCHEMA = RuntimeSchema(
-    objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Account", "חשבונות")],
-    identity={
-        "Contact": IdentityConfig(mechanisms=[["Email"]]),
-        "Account": IdentityConfig(mechanisms=[["Name"]]),
-    },
-)
-
-
-def _at_step4(schema=None):
-    at = AppTest.from_file("main.py", default_timeout=10)
-    at.session_state["step"] = 4
-    at.session_state["schema"] = schema or BASE_SCHEMA
-    at.run()
-    return at
-
-
-def test_step4_renders_without_exception():
-    at = _at_step4()
-    assert not at.exception
-
-
-def test_step4_shows_lookup_section():
-    at = _at_step4()
-    all_text = " ".join(str(e.value) for e in list(at.markdown) + list(at.subheader) + list(at.caption) + list(at.info))
-    assert "Lookup" in all_text or "קשר" in all_text
-
-
-def test_step4_shows_load_order_section():
-    at = _at_step4()
-    all_text = " ".join(str(e.value) for e in list(at.markdown) + list(at.subheader) + list(at.caption) + list(at.info))
-    assert "סדר" in all_text or "טעינה" in all_text
-
-
-def test_step4_with_existing_lookup():
-    schema = RuntimeSchema(
-        objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Account", "חשבונות")],
-        identity={
-            "Contact": IdentityConfig(mechanisms=[["Email"]]),
-            "Account": IdentityConfig(mechanisms=[["Name"]]),
-        },
-        lookups=[LookupConfig("Contact", 3, "Account", "AccountId", ["Name"])],
-    )
-    at = _at_step4(schema)
-    assert not at.exception
-    all_text = " ".join(str(e.value) for e in list(at.markdown) + list(at.subheader) + list(at.caption) + list(at.info))
-    assert "AccountId" in all_text or "Account" in all_text
-
+# ── _load_order — בדיקות-לוגיקה טהורות (סדר-טעינה טופולוגי) ───────────────────
 
 def test_load_order_junction_after_parents():
-    """Junction object loads after both parents."""
+    """אובייקט-junction נטען אחרי שני ההורים."""
     schema = RuntimeSchema(
         objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")],
         junctions=[JunctionConfig(
-            object_a="Contact", block_a="C",
-            object_b="Campaign", block_b="K",
-            junction_object="CampaignMember",
-            id_field_a="ContactId", id_field_b="CampaignId",
+            object_a="Contact", block_a="C", object_b="Campaign", block_b="K",
+            junction_object="CampaignMember", id_field_a="ContactId", id_field_b="CampaignId",
         )],
     )
-    tiers = main_module._load_order(schema)
-    flat = [obj for tier in tiers for obj in tier]
+    flat = [o for tier in main_module._load_order(schema) for o in tier]
     assert flat.index("CampaignMember") > flat.index("Contact")
     assert flat.index("CampaignMember") > flat.index("Campaign")
 
@@ -81,56 +35,46 @@ def test_load_order_junction_object_included():
             symmetric=True,
         )],
     )
-    tiers = main_module._load_order(schema)
-    flat = [obj for tier in tiers for obj in tier]
+    flat = [o for tier in main_module._load_order(schema) for o in tier]
     assert "npe4__Relationship__c" in flat
 
 
-def test_load_order_no_junctions_unchanged():
-    """Without junctions, behaviour identical to P4 implementation."""
+def test_load_order_lookup_target_before_source():
+    """יעד-Lookup נטען לפני אובייקט-המקור."""
     schema = RuntimeSchema(
         objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Account", "חשבונות")],
         lookups=[LookupConfig("Contact", 3, "Account", "AccountId", ["Name"])],
     )
-    tiers = main_module._load_order(schema)
-    flat = [obj for tier in tiers for obj in tier]
+    flat = [o for tier in main_module._load_order(schema) for o in tier]
     assert flat.index("Account") < flat.index("Contact")
 
 
-def test_step4_junction_section_renders():
-    at = _at_step4()
-    assert not at.exception
-    all_text = " ".join(
-        str(e.value) for e in
-        list(at.markdown) + list(at.subheader) + list(at.caption) + list(at.info)
-    ) + " ".join(str(e.label) for e in list(at.expander))
-    assert "קשר" in all_text or "junction" in all_text.lower() or "Junction" in all_text
+# ── טענות-תוכן אמיתיות במסך (לא render-בלבד) ─────────────────────────────────
+
+def _at_step4(schema) -> AppTest:
+    at = AppTest.from_file("main.py", default_timeout=10)
+    at.session_state["step"] = 4
+    at.session_state["schema"] = schema
+    at.run()
+    return at
 
 
-def test_step4_with_existing_junction_shows_label():
+def test_existing_lookup_shown_in_screen():
     schema = RuntimeSchema(
-        objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")],
-        identity={
-            "Contact": IdentityConfig(mechanisms=[["Email"]]),
-            "Campaign": IdentityConfig(mechanisms=[["Name"]]),
-        },
-        junctions=[JunctionConfig(
-            object_a="Contact", block_a="C",
-            object_b="Campaign", block_b="K",
-            junction_object="CampaignMember",
-            id_field_a="ContactId", id_field_b="CampaignId",
-        )],
+        objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Account", "חשבונות")],
+        identity={"Contact": IdentityConfig(mechanisms=[["Email"]]),
+                  "Account": IdentityConfig(mechanisms=[["Name"]])},
+        lookups=[LookupConfig("Contact", 3, "Account", "AccountId", ["Name"])],
     )
     at = _at_step4(schema)
     assert not at.exception
-    all_text = " ".join(str(e.value) for e in list(at.markdown) + list(at.subheader) + list(at.caption))
-    assert "CampaignMember" in all_text
+    text = " ".join(str(e.value) for e in list(at.markdown) + list(at.caption))
+    assert "AccountId" in text or "Account" in text
 
 
-def test_step4_load_order_shows_junction_object():
+def test_existing_junction_shown_in_screen():
     schema = RuntimeSchema(
         objects=[ObjectDef("Contact", "אנשי קשר"), ObjectDef("Campaign", "קמפיינים")],
-        identity={},
         junctions=[JunctionConfig(
             object_a="Contact", block_a="C", object_b="Campaign", block_b="K",
             junction_object="CampaignMember", id_field_a="ContactId", id_field_b="CampaignId",
@@ -138,11 +82,5 @@ def test_step4_load_order_shows_junction_object():
     )
     at = _at_step4(schema)
     assert not at.exception
-    all_text = " ".join(str(e.value) for e in list(at.markdown))
-    assert "CampaignMember" in all_text
-
-
-def test_step4_no_exception_with_empty_objects():
-    schema = RuntimeSchema()
-    at = _at_step4(schema)
-    assert not at.exception
+    text = " ".join(str(e.value) for e in list(at.markdown))
+    assert "CampaignMember" in text  # מופיע גם ברשימת-הקשרים וגם בסדר-הטעינה

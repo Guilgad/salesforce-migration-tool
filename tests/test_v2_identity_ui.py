@@ -1,5 +1,9 @@
 # tests/test_v2_identity_ui.py
-"""AppTest — בדיקות-עשן למסך-הזיהוי של v2 (שלב 3)."""
+"""מסך-הזיהוי (שלב 3) — בדיקות-מצב אמיתיות (לא smoke).
+
+טענות-נכונות: טוגל-ה-dedup כבוי כברירת-מחדל, ומנגנונים שמורים שורדים rerun.
+(בדיקת ה-render-בלי-קריסה עברה ל-test_v2_screens_smoke.py.)
+"""
 from streamlit.testing.v1 import AppTest
 
 from config.runtime_schema import (
@@ -29,30 +33,24 @@ def _schema() -> RuntimeSchema:
     return s
 
 
-def _app(with_data: bool = True) -> AppTest:
+def _app() -> AppTest:
     at = AppTest.from_file("main.py")
     at.session_state["step"] = 3
-    if with_data:
-        at.session_state["schema"] = _schema()
-        at.session_state["fielddict_rows"] = _FD
+    at.session_state["schema"] = _schema()
+    at.session_state["fielddict_rows"] = _FD
     at.run()
     return at
 
 
-def test_identity_screen_renders_without_exception():
+def test_dedup_toggle_defaults_off():
+    """טוגל 'זיהוי כפילויות פנימיות' קיים וכבוי כברירת-מחדל (שום רשומה לא נעלמת)."""
     at = _app()
     assert not at.exception
-    # טוגל-dedup קיים וכבוי כברירת-מחדל
     toggles = [t for t in at.toggle if "כפילויות" in t.label]
     assert toggles and toggles[0].value is False
 
 
-def test_identity_screen_guard_without_data():
-    at = _app(with_data=False)
-    assert not at.exception
-
-
-def test_identity_saved_mechanisms_survive_rerun():
+def test_saved_mechanisms_survive_rerun():
     at = _app()
     schema: RuntimeSchema = at.session_state["schema"]
     schema.identity["Contact"] = IdentityConfig(mechanisms=[["Email"], ["LastName"]])
