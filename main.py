@@ -257,22 +257,12 @@ def _parse_sheet_id(raw: str) -> str:
     return raw
 
 
-def _sheet_connector(
-    role: str,
-    label: str,
-    *,
-    needs_write: bool = False,
-) -> tuple[str, str, list[list[str]] | None]:
+def _connect_inputs(role: str) -> tuple[str, list[str]]:
     """
-    Renders a sheet connector widget (URL input + tab selector).
-    Returns (sheet_id, selected_tab, rows_or_None).
-    Persists sheet_id and tab choice to session state under keys:
-      f"{role}_sheet_id", f"{role}_tab".
+    Shared connector controls: recent-picker + URL input + 🔄.
+    Returns (sheet_id, tabs). Persists f"{role}_sheet_id"/f"{role}_name"/f"{role}_tabs".
     """
     sid_key = f"{role}_sheet_id"
-    tab_key = f"{role}_tab"
-
-    st.markdown(f"**{label}**" + (" ✍️" if needs_write else ""))
 
     recents = recent_sheets.recent_for(role)
     if recents:
@@ -288,7 +278,6 @@ def _sheet_connector(
             st.rerun()
 
     col_url, col_btn = st.columns([5, 1])
-
     raw_url = col_url.text_input(
         "קישור / מזהה גיליון",
         value=st.session_state.get(sid_key, ""),
@@ -303,7 +292,7 @@ def _sheet_connector(
             st.session_state.pop(k, None)
 
     if not sheet_id:
-        return "", "", None
+        return "", []
 
     st.session_state[sid_key] = sheet_id
 
@@ -313,46 +302,144 @@ def _sheet_connector(
             st.session_state[f"{role}_tabs"] = tabs
             try:
                 name = sheets_io.get_spreadsheet_meta(sheet_id).get("name", sheet_id)
-            except Exception:  # noqa: BLE001 — שם הוא רק לתצוגת "אחרונים"
+            except Exception:  # noqa: BLE001 — שם הוא רק לתצוגת כותרת/"אחרונים"
                 name = sheet_id
+            st.session_state[f"{role}_name"] = name
             recent_sheets.remember(role, sheet_id, name)
         except Exception as e:
             st.error(f"שגיאה בחיבור: {e}")
-            return sheet_id, "", None
+            return sheet_id, []
     else:
         tabs = st.session_state[f"{role}_tabs"]
 
-    if not tabs:
-        st.warning("הגיליון ריק מלשוניות.")
-        return sheet_id, "", None
+    return sheet_id, tabs
 
-    default_tab = st.session_state.get(tab_key, tabs[0])
-    selected_tab = st.selectbox(
-        "לשונית",
-        tabs,
-        index=tabs.index(default_tab) if default_tab in tabs else 0,
-        key=f"{role}_tab_select",
+
+def _sheet_connector(
+    role: str,
+    label: str,
+    *,
+    needs_write: bool = False,
+) -> tuple[str, str, list[list[str]] | None]:
+    """
+    Single-tab connector. When connected, collapses to a one-line expander
+    (✅ name · tab · N rows); when not, opens with the controls.
+    Returns (sheet_id, selected_tab, rows_or_None).
+    """
+    tab_key = f"{role}_tab"
+    connected = bool(st.session_state.get(f"{role}_rows"))
+    name = st.session_state.get(f"{role}_name") or st.session_state.get(f"{role}_sheet_id", "")
+    cur_tab = st.session_state.get(tab_key, "")
+    n_rows = len(st.session_state.get(f"{role}_rows") or [])
+    write_mark = " ✍️" if needs_write else ""
+    title = (
+        f"✅ {name} · {cur_tab} · {n_rows} שורות"
+        if connected else f"🔌 {label}{write_mark}"
     )
-    st.session_state[tab_key] = selected_tab
 
-    rows_key = f"{role}_rows"
-    if (
-        rows_key not in st.session_state
-        or st.session_state.get(f"{role}_rows_tab") != selected_tab
-    ):
-        try:
-            rows = sheets_io.read_values(sheet_id, selected_tab)
-            st.session_state[rows_key] = rows
-            st.session_state[f"{role}_rows_tab"] = selected_tab
-            st.success(f"🟢 מחובר · {len(rows)} שורות")
-        except Exception as e:
-            st.error(f"שגיאת קריאה: {e}")
-            return sheet_id, selected_tab, None
-    else:
-        rows = st.session_state[rows_key]
-        st.success(f"🟢 מחובר · {len(rows)} שורות")
+    sheet_id, selected_tab, rows = "", "", None
+    with st.expander(title, expanded=not connected):
+        sheet_id, tabs = _connect_inputs(role)
+        if not sheet_id:
+            return "", "", None
+        if not tabs:
+            st.warning("הגיליון ריק מלשוניות.")
+            return sheet_id, "", None
+
+        default_tab = st.session_state.get(tab_key, tabs[0])
+        selected_tab = st.selectbox(
+            "לשונית",
+            tabs,
+            index=tabs.index(default_tab) if default_tab in tabs else 0,
+            key=f"{role}_tab_select",
+        )
+        st.session_state[tab_key] = selected_tab
+
+        rows_key = f"{role}_rows"
+        if (
+            rows_key not in st.session_state
+            or st.session_state.get(f"{role}_rows_tab") != selected_tab
+        ):
+            try:
+                rows = sheets_io.read_values(sheet_id, selected_tab)
+                st.session_state[rows_key] = rows
+                st.session_state[f"{role}_rows_tab"] = selected_tab
+            except Exception as e:
+                st.error(f"שגיאת קריאה: {e}")
+                return sheet_id, selected_tab, None
+        else:
+            rows = st.session_state[rows_key]
+        st.caption(f"🟢 מחובר · {len(rows)} שורות")
 
     return sheet_id, selected_tab, rows
+
+
+def _auto_match_db_tab(obj_api: str, tabs: list[str]) -> str:
+    """Tab whose name matches the object api (case-insensitive), else ''."""
+    target = obj_api.casefold()
+    for t in tabs:
+        if t.casefold() == target:
+            return t
+    return ""
+
+
+def _db_tab_for(obj: str) -> str:
+    """Resolve an object's DB tab: explicit mapping, else name-match fallback.
+
+    The fallback covers junction/lookup objects that are defined after step 1
+    (so the user never explicitly mapped them).
+    """
+    tab = schema.db_tabs.get(obj, "")
+    if tab:
+        return tab
+    return _auto_match_db_tab(obj, st.session_state.get("db_tabs_list") or [])
+
+
+def _db_connector(label: str, objects: list[str]) -> None:
+    """
+    DB-export connector: unlike input/fielddict it needs a tab PER object
+    (the DB sheet has one tab per object). Populates schema.db_tabs.
+    """
+    sheet_id_now = st.session_state.get("db_sheet_id", "")
+    connected = bool(sheet_id_now and st.session_state.get("db_tabs_list"))
+    name = st.session_state.get("db_name") or sheet_id_now
+    mapped = sum(1 for o in objects if schema.db_tabs.get(o))
+    total = len(objects)
+    title = (
+        f"✅ {name} · {mapped}/{total} לשוניות ממופות"
+        if connected else f"🔌 {label}"
+    )
+
+    with st.expander(title, expanded=not connected):
+        sheet_id, tabs = _connect_inputs("db")
+        if not sheet_id:
+            return
+        schema.db_sheet_id = sheet_id
+        st.session_state["db_tabs_list"] = tabs
+
+        freshness = _db_freshness_label(sheet_id)
+        if freshness:
+            st.caption(freshness)
+        if not tabs:
+            st.warning("הגיליון ריק מלשוניות.")
+            return
+        if not objects:
+            st.info("חבר קודם את גיליון-הקלט כדי לזהות אובייקטים למיפוי.")
+            return
+
+        st.caption("מיפוי לשונית לכל אובייקט:")
+        for obj in objects:
+            c_obj, c_sel = st.columns([1, 2])
+            c_obj.markdown(f"**{obj}**")
+            default = schema.db_tabs.get(obj) or _auto_match_db_tab(obj, tabs) or tabs[0]
+            sel = c_sel.selectbox(
+                obj,
+                tabs,
+                index=tabs.index(default) if default in tabs else 0,
+                key=f"db_tab_{obj}",
+                label_visibility="collapsed",
+            )
+            schema.db_tabs[obj] = sel
 
 
 def _db_freshness_label(sheet_id: str) -> str:
@@ -370,26 +457,77 @@ def _db_freshness_label(sheet_id: str) -> str:
     return ""
 
 
+def _connect_states() -> dict[str, bool]:
+    """Connection state per role (matches the keyed containers in screen_step1)."""
+    return {
+        "input": bool(st.session_state.get("input_rows")),
+        "fielddict": bool(st.session_state.get("fielddict_rows")),
+        "db": bool(st.session_state.get("db_sheet_id") and st.session_state.get("db_tabs_list")),
+    }
+
+
+def _connect_chips() -> None:
+    """Summary chips above the connectors: how many connected / waiting."""
+    states = _connect_states()
+    n_ok = sum(states.values())
+    n_wait = len(states) - n_ok
+    parts = [
+        f'<span style="color:#2e7d32;background:#eef7ef;border:1px solid #81c784;'
+        f'border-radius:6px;padding:3px 10px;font-weight:600;">✅ {n_ok} מחוברים</span>'
+    ]
+    if n_wait:
+        parts.append(
+            f'<span style="color:#b26a00;background:#fff8e1;border:1px solid #ffcc80;'
+            f'border-radius:6px;padding:3px 10px;font-weight:600;">🔌 {n_wait} ממתינים</span>'
+        )
+    st.markdown(
+        f'<div style="display:flex;gap:10px;margin-bottom:12px;font-size:.85rem;">'
+        f'{"".join(parts)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _inject_connect_css() -> None:
+    """Per-state styling for the connector expanders — green=connected / orange=waiting,
+    with a colored status bar on the leading edge (mockup 4-connect-screen.html)."""
+    blocks = []
+    for role, ok in _connect_states().items():
+        bar = "#81c784" if ok else "#ffcc80"
+        bg = "#f3faf4" if ok else "#ffffff"
+        border = "#81c784" if ok else "#e3e3e3"
+        head = "#2e7d32" if ok else "#222222"
+        blocks.append(
+            f'.st-key-conn_{role} [data-testid="stExpander"] details {{'
+            f'background:{bg};border:1px solid {border};'
+            f'border-inline-start:5px solid {bar};border-radius:9px;}}'
+            f'.st-key-conn_{role} [data-testid="stExpander"] summary {{color:{head};font-weight:600;}}'
+        )
+    st.markdown("<style>" + "".join(blocks) + "</style>", unsafe_allow_html=True)
+
+
 def screen_step1() -> None:
     """Step 1: Connect 3 sheets + queries."""
     col_connect, col_queries = st.columns([1, 1], gap="large")
 
     with col_connect:
         st.subheader("חיבור גיליונות")
+        _connect_chips()
 
-        st.markdown("---")
-        st.markdown("#### 📄 גיליון קלט")
-        input_id, input_tab, input_rows = _sheet_connector(
-            "input", "גיליון הנתונים של הלקוח", needs_write=False
-        )
+        with st.container(key="conn_input"):
+            input_id, input_tab, input_rows = _sheet_connector(
+                "input", "גיליון הקלט — נתוני הלקוח", needs_write=False
+            )
 
         if input_rows:
-            tt = st.radio(
+            c_lbl, c_radio = st.columns([1, 3])
+            c_lbl.markdown("סוג טבלה:")
+            tt = c_radio.radio(
                 "סוג הטבלה",
                 ["טבלה מרובת אובייקטים", "טבלת אובייקט יחיד"],
                 index=0 if schema.table_type == "multi" else 1,
                 horizontal=True,
                 key="table_type_radio",
+                label_visibility="collapsed",
             )
             schema.table_type = "multi" if tt.startswith("טבלה מרו") else "single"
 
@@ -418,21 +556,19 @@ def screen_step1() -> None:
                 if detected:
                     st.caption(f"אובייקטים שזוהו: {' · '.join(detected)}")
 
-        st.markdown("---")
-        st.markdown("#### 📚 מילון שדות (FieldDefinition)")
-        fd_id, fd_tab, _ = _sheet_connector("fielddict", "גיליון תוצאות שאילתת FieldDefinition")
+        with st.container(key="conn_fielddict"):
+            fd_id, fd_tab, _ = _sheet_connector("fielddict", "מילון שדות (FieldDefinition)")
         if fd_id:
             schema.fielddict_sheet_id = fd_id
             schema.fielddict_tab = fd_tab
 
-        st.markdown("---")
-        st.markdown("#### 🗄️ ייצוא DB")
-        db_id, _, _ = _sheet_connector("db", "גיליון ייצוא הנתונים הקיימים מ-Salesforce")
-        if db_id:
-            schema.db_sheet_id = db_id
-            freshness = _db_freshness_label(db_id)   # also caches db_freshness_days
-            if freshness:
-                st.caption(freshness)
+        db_objs = [o.api_name for o in schema.objects]
+        _known = {o.api_name for o in schema.objects}
+        db_objs += [o.api_name for o in schema.extra_objects if o.api_name not in _known]
+        with st.container(key="conn_db"):
+            _db_connector("ייצוא DB — נתונים קיימים מ-Salesforce", db_objs)
+
+        _inject_connect_css()
 
     with col_queries:
         st.subheader("שאילתות ל-Inspector")
@@ -1234,7 +1370,7 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
                 records_a = apply_extra_fields(records_a, schema, jc.object_a)
                 record_dicts_a = [r.values for r in records_a]
                 id_cfg_a = schema.identity.get(jc.object_a, IdentityConfig())
-                db_tab_a = schema.db_tabs.get(jc.object_a, "")
+                db_tab_a = _db_tab_for(jc.object_a)
                 db_rows_a = _cached_read(schema.db_sheet_id, db_tab_a) if db_tab_a else []
                 db_recs_a = rows_to_dicts(db_rows_a)
                 dedup_a = deduplicate(
@@ -1250,7 +1386,7 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
                 records_b = apply_extra_fields(records_b, schema, jc.object_b)
                 record_dicts_b = [r.values for r in records_b]
                 id_cfg_b = schema.identity.get(jc.object_b, IdentityConfig())
-                db_tab_b = schema.db_tabs.get(jc.object_b, "")
+                db_tab_b = _db_tab_for(jc.object_b)
                 db_rows_b = _cached_read(schema.db_sheet_id, db_tab_b) if db_tab_b else []
                 db_recs_b = rows_to_dicts(db_rows_b)
                 dedup_b = deduplicate(
@@ -1260,7 +1396,7 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
                     dedup_internal=id_cfg_b.dedup_internal,
                 )
 
-                jnc_tab = schema.db_tabs.get(jc.junction_object, "")
+                jnc_tab = _db_tab_for(jc.junction_object)
                 jnc_db_rows = _cached_read(schema.db_sheet_id, jnc_tab) if jnc_tab else []
                 jnc_db_recs = rows_to_dicts(jnc_db_rows)
                 db_pairs = db_junction_pairs_from_records(jnc_db_recs, jc)
@@ -1320,7 +1456,7 @@ def _render_manual_panel(schema, obj: str, build_result) -> None:
             record_dicts = [r.values for r in records]
             source_rows = [r.source_row for r in records]
 
-            db_tab = schema.db_tabs.get(obj, "")
+            db_tab = _db_tab_for(obj)
             db_rows = _cached_read(schema.db_sheet_id, db_tab) if db_tab else []
             db_recs = rows_to_dicts(db_rows)
             db_by_id = {r["Id"]: r for r in db_recs if r.get("Id")}
@@ -1422,7 +1558,7 @@ def _run_build_pipeline(schema: "RuntimeSchema", obj: str) -> None:
         record_dicts = [r.values for r in records]
         source_rows = [r.source_row for r in records]
 
-        db_tab = schema.db_tabs.get(obj, "")
+        db_tab = _db_tab_for(obj)
         db_rows = _cached_read(schema.db_sheet_id, db_tab) if db_tab else []
         db_recs = sheets_io.rows_to_dicts(db_rows)
         # Build {Id: dict} index required by output_writer
