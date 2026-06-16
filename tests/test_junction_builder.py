@@ -234,6 +234,43 @@ def test_symmetric_db_check_both_orders():
     assert records[0].exists_in_db is True
 
 
+def test_same_object_instances_link_distinct_records():
+    """
+    קשר בין שני מופעים של אותו אובייקט (בעל↔אישה, שניהם Contact).
+
+    באותה שורה יש שתי רשומות Contact: מופע 1 (בעל) ומופע 2 (אישה). split_a==split_b
+    (אותו פיצול Contact). המנוע חייב לקשר את Id-של-מופע-1 ל-Id-של-מופע-2 — לא את
+    הראשון לעצמו. נכשל בקוד-הישן (מיפוי לפי block_a קבוע → תמיד הרשומה הראשונה).
+    """
+    both = [
+        _split(3, "1", {"FirstName": "בעל"}),
+        _split(3, "2", {"FirstName": "אישה"}),
+    ]
+    dedup_both = _dedup(["C1", "C2"], [[0], [1]])
+    cfg = JunctionConfig(
+        object_a="Contact", block_a="1",
+        object_b="Contact", block_b="2",
+        junction_object="npe4__Relationship__c",
+        id_field_a="npe4__Contact__c", id_field_b="npe4__RelatedContact__c",
+    )
+
+    records = junction_builder.derive_junctions(
+        tmpl_rows=[[], [], [], ["x"]],
+        _columns=[],
+        split_a=both, dedup_a=dedup_both,
+        split_b=both, dedup_b=dedup_both,
+        id_map_a={"C1": "003husband", "C2": "003wife"},
+        id_map_b={"C1": "003husband", "C2": "003wife"},
+        db_pairs=set(),
+        config=cfg,
+        data_start_row=3,
+    )
+    assert len(records) == 1
+    assert records[0].sf_id_a == "003husband"   # מופע 1
+    assert records[0].sf_id_b == "003wife"      # מופע 2
+    assert records[0].sf_id_a != records[0].sf_id_b
+
+
 def test_row_without_side_b_block_skipped():
     split_a = [_split(3, "C", {})]
     dedup_a = _dedup(["C1"], [[0]])

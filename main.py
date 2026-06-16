@@ -1179,6 +1179,36 @@ def _lookup_col_label(schema: "RuntimeSchema", lc: "LookupConfig") -> str:
     return f"עמודה {lc.source_col_index}"
 
 
+def _instance_picker(schema, obj_api: str, key: str) -> str:
+    """בורר-מופע (1..N) לאובייקט רב-מופע; אחרת מחזיר '1' בלי להציג פקד."""
+    od = next((o for o in schema.objects if o.api_name == obj_api), None)
+    n = od.instance_count if od else 1
+    if schema.multi_instance.get(obj_api, False) and n > 1:
+        return st.selectbox(
+            "מופע", options=[str(i) for i in range(1, n + 1)], key=key,
+        )
+    return "1"
+
+
+def _id_field_choices(fields: list, parent_obj: str) -> tuple[list[str], str]:
+    """אפשרויות-API לשדה-Id (reference/Id-suffix קודם) + ברירת-מחדל חכמה לפי ההורה."""
+    def _score(f):
+        dt = (f.datatype or "").casefold()
+        ref = "reference" in dt or "lookup" in dt or f.api.endswith("Id") or f.api.endswith("__c")
+        return 0 if ref else 1
+    ordered = [f.api for f in sorted(fields, key=_score)]
+    default = next(
+        (a for a in ordered if a == f"{parent_obj}Id"),
+        ordered[0] if ordered else "",
+    )
+    return ordered, default
+
+
+def _jnc_field_label(fields: list, api: str) -> str:
+    f = next((x for x in fields if x.api == api), None)
+    return f"{f.label} ({api})" if f and f.label and f.label != api else api
+
+
 def screen_lookups() -> None:
     schema: RuntimeSchema = st.session_state.get("schema", RuntimeSchema())
     _set_status(4, "pending")
@@ -1279,8 +1309,10 @@ def screen_lookups() -> None:
     for i, jc in enumerate(schema.junctions):
         with st.container(border=True):
             c1, c2 = st.columns([8, 1])
+            inst_a = f" (מופע {jc.block_a})" if jc.block_a not in ("", "1") else ""
+            inst_b = f" (מופע {jc.block_b})" if jc.block_b not in ("", "1") else ""
             c1.markdown(
-                f"**{jc.object_a}** + **{jc.object_b}** → **{jc.junction_object}**  \n"
+                f"**{jc.object_a}**{inst_a} + **{jc.object_b}**{inst_b} → **{jc.junction_object}**  \n"
                 f"Id A: `{jc.id_field_a}` · Id B: `{jc.id_field_b}`"
                 + (f"  \nבקרה: עמודה {jc.control_col_index}" if jc.control_col_index is not None else "")
                 + ("  \n🔄 סימטרי" if jc.symmetric else "")
@@ -1290,54 +1322,74 @@ def screen_lookups() -> None:
                 st.rerun()
 
     with st.expander("➕ הוסף Junction"):
+        fd = _field_dict_result()
+        dictionary = fd.objects if fd else {}
         all_junction_obj_apis = [o.api_name for o in schema.objects]
         all_junction_obj_labels = {o.api_name: o.display_name for o in schema.objects}
 
         if not all_junction_obj_apis:
             st.info("אין אובייקטים — חבר קלט ומפה שדות קודם.")
         else:
-            jnc_obj_a = st.selectbox(
-                "אובייקט A",
-                options=all_junction_obj_apis,
-                format_func=lambda a: all_junction_obj_labels.get(a, a),
-                key="jnc_obj_a",
+            # אובייקט + מופע פר-צד, זה-לצד-זה
+            ca, cb = st.columns(2)
+            with ca:
+                jnc_obj_a = st.selectbox(
+                    "אובייקט A", options=all_junction_obj_apis,
+                    format_func=lambda a: all_junction_obj_labels.get(a, a),
+                    key="jnc_obj_a",
+                )
+                jnc_block_a = _instance_picker(schema, jnc_obj_a, "jnc_inst_a")
+            with cb:
+                jnc_obj_b = st.selectbox(
+                    "אובייקט B", options=all_junction_obj_apis,
+                    format_func=lambda a: all_junction_obj_labels.get(a, a),
+                    key="jnc_obj_b",
+                )
+                jnc_block_b = _instance_picker(schema, jnc_obj_b, "jnc_inst_b")
+
+            # אובייקט-Junction — בחירה מהמילון (fallback ל-text אם המילון ריק)
+            dict_objs = sorted(dictionary.keys())
+            if dict_objs:
+                jnc_junction_obj = st.selectbox(
+                    "אובייקט Junction", options=dict_objs, key="jnc_junction_obj",
+                )
+            else:
+                jnc_junction_obj = st.text_input(
+                    "אובייקט Junction (API name, למשל CampaignMember)",
+                    key="jnc_junction_obj",
+                )
+                st.caption("חבר מילון-שדות בשלב 1 לבחירה חכמה של האובייקט והשדות.")
+
+            # שדות-Id — בחירה משדות אובייקט-ה-Junction (fallback ל-text)
+            jfields = (
+                mapper.candidates_for(jnc_junction_obj, dictionary)
+                if jnc_junction_obj else []
             )
-            jnc_block_a = st.text_input(
-                "שם הבלוק של A (מהשורה הראשונה בטמפלייט)",
-                value=all_junction_obj_labels.get(jnc_obj_a, jnc_obj_a),
-                key="jnc_block_a",
-            )
-            jnc_obj_b = st.selectbox(
-                "אובייקט B",
-                options=all_junction_obj_apis,
-                format_func=lambda a: all_junction_obj_labels.get(a, a),
-                key="jnc_obj_b",
-            )
-            jnc_block_b = st.text_input(
-                "שם הבלוק של B (מהשורה הראשונה בטמפלייט)",
-                value=all_junction_obj_labels.get(jnc_obj_b, jnc_obj_b),
-                key="jnc_block_b",
-            )
-            jnc_junction_obj = st.text_input(
-                "אובייקט Junction (API name, למשל CampaignMember)",
-                key="jnc_junction_obj",
-            )
-            jnc_id_a = st.text_input(
-                "שדה Id של A על Junction (למשל ContactId)",
-                key="jnc_id_a",
-            )
-            jnc_id_b = st.text_input(
-                "שדה Id של B על Junction (למשל CampaignId)",
-                key="jnc_id_b",
-            )
-            jnc_symmetric = st.checkbox(
-                "סימטרי (NPSP — מונע כפילויות דו-כיווניות)",
-                key="jnc_symmetric",
-            )
-            jnc_has_control = st.checkbox(
-                "עמודת בקרה (צור רק כש=TRUE)",
-                key="jnc_has_control",
-            )
+            ci, cj = st.columns(2)
+            if jfields:
+                opts_a, def_a = _id_field_choices(jfields, jnc_obj_a)
+                opts_b, def_b = _id_field_choices(jfields, jnc_obj_b)
+                jnc_id_a = ci.selectbox(
+                    "שדה Id של A", options=opts_a,
+                    index=opts_a.index(def_a) if def_a in opts_a else 0,
+                    format_func=lambda a: _jnc_field_label(jfields, a), key="jnc_id_a",
+                )
+                jnc_id_b = cj.selectbox(
+                    "שדה Id של B", options=opts_b,
+                    index=opts_b.index(def_b) if def_b in opts_b else 0,
+                    format_func=lambda a: _jnc_field_label(jfields, a), key="jnc_id_b",
+                )
+            else:
+                jnc_id_a = ci.text_input("שדה Id של A (למשל ContactId)", key="jnc_id_a")
+                jnc_id_b = cj.text_input("שדה Id של B (למשל CampaignId)", key="jnc_id_b")
+                if jnc_junction_obj:
+                    st.caption(
+                        f"`{jnc_junction_obj}` אינו במילון-השדות — הוסף אותו לשאילתת-המילון בשלב 1 לבחירה חכמה."
+                    )
+
+            cs, cc = st.columns(2)
+            jnc_symmetric = cs.checkbox("סימטרי (NPSP)", key="jnc_symmetric")
+            jnc_has_control = cc.checkbox("עמודת בקרה (צור רק כש=TRUE)", key="jnc_has_control")
             jnc_ctrl_col = None
             if jnc_has_control:
                 ctrl_col_opts = [
@@ -1354,19 +1406,17 @@ def screen_lookups() -> None:
                 else:
                     st.info("אין עמודות בקרה — מפה עמודה עם תפקיד 'בקרה' בשלב 2.")
 
-            can_add = (
-                jnc_junction_obj.strip()
-                and jnc_id_a.strip()
-                and jnc_id_b.strip()
-                and jnc_block_a.strip()
-                and jnc_block_b.strip()
+            can_add = bool(
+                (jnc_junction_obj or "").strip()
+                and (jnc_id_a or "").strip()
+                and (jnc_id_b or "").strip()
             )
             if st.button("הוסף Junction", key="jnc_add", disabled=not can_add):
                 schema.junctions.append(JunctionConfig(
                     object_a=jnc_obj_a,
-                    block_a=jnc_block_a.strip(),
+                    block_a=jnc_block_a,
                     object_b=jnc_obj_b,
-                    block_b=jnc_block_b.strip(),
+                    block_b=jnc_block_b,
                     junction_object=jnc_junction_obj.strip(),
                     id_field_a=jnc_id_a.strip(),
                     id_field_b=jnc_id_b.strip(),

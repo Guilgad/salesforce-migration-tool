@@ -69,14 +69,17 @@ def derive_junctions(
     config.field_mappings: list of (field_api, col_index) for extra fields on the junction.
     config.symmetric: if True, DB check uses (min, max) sort so A↔B = B↔A.
     """
-    # Build (source_row, block) → record_index maps
+    # Build (source_row, block) → record_index maps.
+    # Key on each record's OWN block (= instance, "1"/"2"), so a junction between two
+    # instances of the same object (husband↔wife, both Contact) links the correct
+    # records. The lookup below uses config.block_a/block_b to pick the right instance.
     row_block_a: dict[tuple[int, str], int] = {}
     for i, rec in enumerate(split_a):
-        row_block_a.setdefault((rec.source_row, config.block_a), i)
+        row_block_a.setdefault((rec.source_row, rec.block), i)
 
     row_block_b: dict[tuple[int, str], int] = {}
     for i, rec in enumerate(split_b):
-        row_block_b.setdefault((rec.source_row, config.block_b), i)
+        row_block_b.setdefault((rec.source_row, rec.block), i)
 
     # record_index → local_key
     idx_to_key_a: dict[int, str] = {

@@ -84,3 +84,55 @@ def test_existing_junction_shown_in_screen():
     assert not at.exception
     text = " ".join(str(e.value) for e in list(at.markdown))
     assert "CampaignMember" in text  # מופיע גם ברשימת-הקשרים וגם בסדר-הטעינה
+
+
+# ── טופס-Junction חכם: בורר-מופע + dropdown-Id + הוספה מודעת-מופע ──────────────
+
+_FD_JUNCTION = [
+    ["EntityDefinition.QualifiedApiName", "EntityDefinition.Label",
+     "Label", "QualifiedApiName", "DataType"],
+    ["Contact", "Contact", "Last Name", "LastName", "Text"],
+    ["npe4__Relationship__c", "Relationship", "Contact", "npe4__Contact__c", "Lookup()"],
+    ["npe4__Relationship__c", "Relationship", "Related", "npe4__RelatedContact__c", "Lookup()"],
+    ["npe4__Relationship__c", "Relationship", "Type", "npe4__Type__c", "Picklist"],
+]
+
+
+def test_junction_form_instance_picker_and_smart_id_fields():
+    """אובייקט רב-מופע (Contact×2) → בורר-מופע; אובייקט-Junction ושדות-Id כ-dropdown;
+    הוספת קשר בעל↔אישה שומרת block_a='1'/block_b='2' (מודעות-מופע)."""
+    schema = RuntimeSchema(
+        objects=[ObjectDef("Contact", "אנשי קשר", instance_count=2)],
+        multi_instance={"Contact": True},
+    )
+    at = AppTest.from_file("main.py", default_timeout=20)
+    at.session_state["step"] = 4
+    at.session_state["schema"] = schema
+    at.session_state["fielddict_rows"] = _FD_JUNCTION
+    at.run()
+    assert not at.exception
+
+    # בורר-מופע מופיע לשני הצדדים (Contact רב-מופע)
+    assert at.selectbox(key="jnc_inst_a")
+    assert at.selectbox(key="jnc_inst_b")
+
+    # אובייקט-Junction = dropdown מהמילון (לא text_input)
+    jobj = at.selectbox(key="jnc_junction_obj")
+    assert "npe4__Relationship__c" in jobj.options
+    jobj.set_value("npe4__Relationship__c").run()
+
+    # שדות-Id = dropdown משדות אובייקט-ה-Junction
+    id_a = at.selectbox(key="jnc_id_a")
+    assert any("npe4__Contact__c" in o for o in id_a.options)
+
+    # קשר בעל↔אישה: מופע 1 ↔ מופע 2
+    at.selectbox(key="jnc_inst_a").set_value("1").run()
+    at.selectbox(key="jnc_inst_b").set_value("2").run()
+    at.button(key="jnc_add").click().run()
+    assert not at.exception
+
+    js = at.session_state["schema"].junctions
+    assert len(js) == 1
+    assert js[0].block_a == "1" and js[0].block_b == "2"
+    assert js[0].junction_object == "npe4__Relationship__c"
+    assert js[0].id_field_a == "npe4__Contact__c"
