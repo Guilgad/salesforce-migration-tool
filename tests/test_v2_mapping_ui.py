@@ -5,7 +5,7 @@
 """
 from streamlit.testing.v1 import AppTest
 
-from config.runtime_schema import RuntimeSchema, ValueMap, ValueMapEntry
+from config.runtime_schema import RuntimeSchema, ObjectDef, ValueMap, ValueMapEntry
 
 _INPUT_DATED = [
     ["Contact", "", ""],
@@ -70,3 +70,49 @@ def test_column_can_be_reassigned_to_junction_object():
     assert not at.exception
     schema = at.session_state["schema"]
     assert schema.mappings[1].object_api == "CampaignMember"
+
+
+# ── יישור-אות במקור: schema.objects api_name → קאנון המילון, ו-instance_count ──
+
+_INPUT_2CONTACTS = [
+    ["contact", "", "contact", ""],     # שורת-אובייקט: 2 בלוקים (בעל/אישה), אותיות-קטנות
+    ["שם פרטי", "טלפון", "שם פרטי", "טלפון"],
+    ["", "", "", ""],
+    ["יוסי", "050", "שרה", "051"],
+]
+_FD_CONTACT = [
+    ["EntityDefinition.QualifiedApiName", "EntityDefinition.Label",
+     "Label", "QualifiedApiName", "DataType"],
+    ["Contact", "Contact", "First Name", "FirstName", "Text"],
+    ["Contact", "Contact", "Phone", "Phone", "Phone"],
+]
+
+
+def test_object_api_name_canonicalized_and_instance_count_set():
+    """
+    שם-אובייקט בקלט באותיות-קטנות ('contact') מיושר לקאנון-המילון ('Contact') **במקור**
+    (`schema.objects[].api_name`), כך ש-`od.instance_count` נכתב נכון לאובייקט רב-מופע.
+    זהו שורש באג-ה-case (בורר-מופע לא הופיע ב-Junction). נכשל לפני התיקון:
+    schema.objects נשאר 'contact' → חיפוש ה-ObjectDef ב-screen_mapping לא תואם → instance_count=1.
+    """
+    at = AppTest.from_file("main.py", default_timeout=20)
+    at.session_state["step"] = 2
+    at.session_state["schema"] = RuntimeSchema(
+        input_sheet_id="x", input_tab="t",
+        objects=[ObjectDef("contact", "אנשי קשר")],   # אותיות-קטנות, כמו מהכותרת
+    )
+    at.session_state["input_rows"] = _INPUT_2CONTACTS
+    at.session_state["fielddict_rows"] = _FD_CONTACT
+    at.run()
+    assert not at.exception
+
+    # יישור-אות במקור
+    od = at.session_state["schema"].objects[0]
+    assert od.api_name == "Contact"
+
+    # סימון "מופיע יותר מפעם אחת" → instance_count נכתב (2 בלוקים)
+    at.checkbox(key="multi_Contact").check().run()
+    assert not at.exception
+    od = at.session_state["schema"].objects[0]
+    assert od.instance_count == 2
+    assert at.session_state["schema"].multi_instance.get("Contact") is True

@@ -346,13 +346,18 @@ def _sheet_connector(
             st.warning("הגיליון ריק מלשוניות.")
             return sheet_id, "", None
 
-        default_tab = st.session_state.get(tab_key, tabs[0])
-        selected_tab = st.selectbox(
-            "לשונית",
-            tabs,
-            index=tabs.index(default_tab) if default_tab in tabs else 0,
-            key=f"{role}_tab_select",
-        )
+        if len(tabs) == 1:
+            # לשונית יחידה → חיבור אוטומטי, בלי בורר מיותר.
+            selected_tab = tabs[0]
+            st.caption(f"לשונית: {selected_tab}")
+        else:
+            default_tab = st.session_state.get(tab_key, tabs[0])
+            selected_tab = st.selectbox(
+                "לשונית",
+                tabs,
+                index=tabs.index(default_tab) if default_tab in tabs else 0,
+                key=f"{role}_tab_select",
+            )
         st.session_state[tab_key] = selected_tab
 
         rows_key = f"{role}_rows"
@@ -820,12 +825,22 @@ def screen_mapping() -> None:
 
     columns = schema_reader.read_header_columns(input_rows, schema)
     # יישור אות: שם-האובייקט בקלט (contact) עשוי להיות שונה מהקאנון של Salesforce
-    # (Contact). מיישרים לאות-המילון כדי שכל החיפושים (טאבים/auto-map) יתאימו.
+    # (Contact). מיישרים לאות-המילון — **במקור** — כדי שכל הצרכנים (טאבים/auto-map/
+    # instance_count/multi_instance/identity/בורר-מופע ב-Junction) יסכימו על אותו מפתח.
+    # זה מקור-האמת היחיד לשם-אובייקט; בלעדיו נוצרת משפחת באגי-case (ראה ba7ac17).
     _canon = {k.casefold(): k for k in dictionary}
     for c in columns:
         canon = _canon.get((c.object_api or "").casefold())
         if canon:
             c.object_api = canon
+    for od in schema.objects:
+        canon = _canon.get((od.api_name or "").casefold())
+        if canon and od.api_name != canon:
+            od.api_name = canon
+    if schema.single_object_api:
+        schema.single_object_api = _canon.get(
+            schema.single_object_api.casefold(), schema.single_object_api
+        )
     _ensure_mappings(columns, dictionary)
 
     # סיכום-נוריות + סטטוס לסרגל
@@ -1209,6 +1224,20 @@ def _jnc_field_label(fields: list, api: str) -> str:
     return f"{f.label} ({api})" if f and f.label and f.label != api else api
 
 
+def _col_display(idx: int) -> str:
+    """תצוגת-עמודה ודאית: שם-העמודה (תווית/שדה) + אות-העמודה בגיליון (A/B/…)."""
+    letter = sheets_io.col_letter(idx)
+    rows = st.session_state.get("input_rows") or []
+    label = ""
+    if 0 <= schema.label_row < len(rows):
+        r = rows[schema.label_row]
+        if idx < len(r) and r[idx]:
+            label = str(r[idx]).strip()
+    cm = schema.mappings.get(idx)
+    name = label or (cm.field_api if cm and cm.field_api else "") or "עמודה"
+    return f"{name} (עמ' {letter})"
+
+
 def screen_lookups() -> None:
     schema: RuntimeSchema = st.session_state.get("schema", RuntimeSchema())
     _set_status(4, "pending")
@@ -1400,7 +1429,7 @@ def screen_lookups() -> None:
                     jnc_ctrl_col = st.selectbox(
                         "עמודת בקרה",
                         options=[idx for idx, _ in ctrl_col_opts],
-                        format_func=lambda i: schema.mappings[i].field_api or f"עמודה {i}",
+                        format_func=_col_display,
                         key="jnc_ctrl_col",
                     )
                 else:
