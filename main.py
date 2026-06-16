@@ -731,8 +731,10 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
     elif sample:
         col_prev.caption(sample)
 
-    # מפת-ערכים — חלונית-צפה במקום
-    if m.role == ROLE_FIELD:
+    # מפת-ערכים — חלונית-צפה במקום. רלוונטית רק לשדה-פיקליסט שנבחר בפועל
+    # (לא לכל ROLE_FIELD — זה ברירת-המחדל גם לעמודה לא-ממופה / Text/Email).
+    _dt = datatypes.get(m.field_api, "").casefold()
+    if m.role == ROLE_FIELD and m.field_api and "picklist" in _dt:
         with col_vm.popover("🗺️✓" if vm and vm.entries else "🗺️"):
             st.markdown(f"**מפת-ערכים — {c.label}**")
             st.caption("ערך-מקור → ערך-יעד (נטען) → שם (תצוגה בלבד). התאמה מדויקת.")
@@ -771,7 +773,7 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
                 st.rerun()
 
     if multi and m.role == ROLE_FIELD:
-        m.instance = int(cols[6].number_input(
+        m.instance = int(cols[7].number_input(
             "מופע", min_value=1, max_value=9, value=m.instance,
             key=f"inst_{c.index}", label_visibility="collapsed",
         ))
