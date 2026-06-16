@@ -61,6 +61,20 @@ tests/                           # pytest suite (engine units + v2 integration)
 - בדיקות "renders_without_exception" מרוכזות ב-`tests/test_v2_screens_smoke.py` בלבד (גלאי-קריסות).
   אל תוסיף עוד כאלה פר-מסך — הן ביטחון-שווא.
 
+## שיטת-עבודה (v2) — ברירת-מחדל מחייבת
+
+ארבעה כללים שננעלו אחרי ניתוח "למה v2 כל-הזמן נשבר" (פירוט ב-memory `working-method`):
+
+1. **"ירוק ≠ גמור".** לא להכריז "הושלם" עד בדיקת-תפר (אינטגרציה דרך `build_object_core`/AppTest שבודקת
+   פלט) **וגם** אימות-חי לעבודת-UI. pytest ירוק לבדו אינו עדות.
+2. **פרוסות-קטנות + אימות אחרי כל אחת** — לא לצבור צעדים ואז לבדוק.
+3. **מקור-אמת יחיד למזהים-משותפים** — שם-אובייקט/שדה שחי בשני מקורות (כותרת-לקוח מול מילון-SF) חייב
+   להיקאנן בגבול אחד. שורש משפחת באגי-ה-case. בכל הוספה — לשאול "איפה מקור-האמת היחיד?".
+4. **דוגמת-דאטה אמיתית לפני בניית-חיווט** — בונים מול מציאות, לא מול הנחות.
+
+הוק מקומי `.claude/hooks/pytest_on_py_change.py` (ב-`settings.local.json`, gitignored) מריץ pytest
+אוטומטית כשנגעת ב-`.py` ומקפיץ כשל — רשת-בטיחות מכנית, לא-חוסמת (לא נלחמת ב-TDD).
+
 **Wizard navigation (main.py)** — top process-bar `_topbar()` with 5 steps (click to navigate via
 `st.session_state["step"]`); per-step live status badges via `_set_status`/`_status_badge`. The
 sidebar is slim (refresh buttons + personal notes only). Steps 4–5 bundle two builders each, switched
