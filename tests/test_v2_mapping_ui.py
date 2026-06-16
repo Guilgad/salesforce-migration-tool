@@ -36,3 +36,37 @@ def test_value_map_preview_integration():
     assert not at.exception
     caps = " ".join(c.value for c in at.caption)
     assert "MAPPED (מתורגם)" in caps
+
+
+# ── בורר-אובייקט פר-שורה: הקצאה לאובייקט שאינו-בלוק (CampaignMember) ──────────
+
+_INPUT_CM = [
+    ["Campaign", "Campaign"],          # שורת-אובייקט: שתי העמודות תחת Campaign (אין בלוק CampaignMember)
+    ["שם קמפיין", "סטטוס השתתפות"],
+    ["", ""],
+    ["כנס 2025", "Responded"],
+]
+_FD_CM = [
+    ["EntityDefinition.QualifiedApiName", "EntityDefinition.Label",
+     "Label", "QualifiedApiName", "DataType"],
+    ["Campaign", "Campaign", "Name", "Name", "Text"],
+    ["CampaignMember", "CampaignMember", "Status", "Status", "Picklist"],
+]
+
+
+def test_column_can_be_reassigned_to_junction_object():
+    """עמודת 'סטטוס השתתפות' (תחת Campaign בכותרת) ניתנת-להקצאה ל-CampaignMember דרך בורר-האובייקט."""
+    at = AppTest.from_file("main.py", default_timeout=15)
+    at.session_state["step"] = 2
+    at.session_state["schema"] = RuntimeSchema(input_sheet_id="x", input_tab="t")
+    at.session_state["input_rows"] = _INPUT_CM
+    at.session_state["fielddict_rows"] = _FD_CM
+    at.run()
+    assert not at.exception
+    # בורר-האובייקט של עמודה 1 קיים ומציע CampaignMember
+    sel = at.selectbox(key="mapobj_1")
+    assert "CampaignMember" in sel.options
+    sel.set_value("CampaignMember").run()
+    assert not at.exception
+    schema = at.session_state["schema"]
+    assert schema.mappings[1].object_api == "CampaignMember"

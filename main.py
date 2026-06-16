@@ -643,14 +643,29 @@ def _distinct_values(input_rows: list[list[str]], col_index: int, limit: int = 2
     return out
 
 
-def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False) -> None:
-    """שורת-מיפוי אחת: תווית · בורר-שדה · מקור · סטטוס · דוגמה (· מופע)."""
-    widths = [3, 4, 1.2, 1.6, 3, 1] + ([1] if multi else [])
+def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
+                 obj_options: list[str] | None = None) -> None:
+    """שורת-מיפוי אחת: תווית · אובייקט · בורר-שדה · מקור · סטטוס · דוגמה (· מופע)."""
+    widths = [2.3, 1.6, 3.2, 1.0, 1.5, 2.6, 1] + ([1] if multi else [])
     cols = st.columns(widths)
-    col_label, col_field, col_src, col_status, col_prev, col_vm = cols[:6]
+    col_label, col_obj, col_field, col_src, col_status, col_prev, col_vm = cols[:7]
 
     col_label.markdown(f"**{c.label or '—'}**")
     col_label.caption(f"עמ' {sheets_io.col_letter(c.index)}")
+
+    # בורר-אובייקט: מאפשר להקצות עמודה לאובייקט שאינו-בלוק (למשל CampaignMember).
+    # נשמר ב-m.object_api (הבנייה קוראת ממנו); שינוי מעביר את השורה לטאב-האובייקט החדש.
+    if obj_options:
+        opts = sorted(set(obj_options) | ({m.object_api} if m.object_api else set()))
+        cur = m.object_api if m.object_api in opts else opts[0]
+        chosen_obj = col_obj.selectbox(
+            "אובייקט", opts, index=opts.index(cur),
+            key=f"mapobj_{c.index}", label_visibility="collapsed",
+        )
+        if chosen_obj != m.object_api:
+            m.object_api = chosen_obj
+            m.field_api, m.role, m.status, m.source = "", ROLE_FIELD, ST_CHECK, "manual"
+            st.rerun()
 
     # אפשרויות: מיוחדות → מועמדים → שאר השדות (Label (api))
     by_api = {f.api: f for f in fields}
@@ -831,14 +846,23 @@ def screen_mapping() -> None:
     )
     _set_status(2, "done" if counts["check"] == 0 else "pending")
 
+    # אובייקט אפקטיבי = זה שב-mapping (ניתן-לשינוי ידני) או, בהיעדרו, מהכותרת.
+    # הבנייה קוראת מ-m.object_api, אז הקיבוץ-לטאבים חייב לכבד אותו (לא את הכותרת).
+    def _eff_obj(col):
+        mm = schema.mappings.get(col.index)
+        return (mm.object_api if mm and mm.object_api else col.object_api) or ""
+
     obj_names: list[str] = []
     for c in columns:
-        if c.object_api and c.object_api not in obj_names:
-            obj_names.append(c.object_api)
+        o = _eff_obj(c)
+        if o and o not in obj_names:
+            obj_names.append(o)
     if not obj_names:
         st.error("לא זוהו אובייקטים בשורת-האובייקט של הקלט.")
         return
 
+    # בורר-האובייקט פר-שורה מציע את כל אובייקטי-המילון (כולל junction כמו CampaignMember)
+    obj_options = sorted(dictionary.keys())
     tab_titles = [o if o in dictionary else f"{o} ⚠️ חסר מילון" for o in obj_names]
     for tab, obj in zip(st.tabs(tab_titles), obj_names):
         with tab:
@@ -848,7 +872,7 @@ def screen_mapping() -> None:
                 )
             fields = mapper.candidates_for(obj, dictionary)
             datatypes = {f.api: f.datatype for f in fields}
-            obj_cols = [c for c in columns if c.object_api == obj]
+            obj_cols = [c for c in columns if _eff_obj(c) == obj]
 
             multi = st.checkbox(
                 "האובייקט מופיע יותר מפעם אחת בשורה (למשל בעל/אישה)",
@@ -875,16 +899,16 @@ def screen_mapping() -> None:
                     if mm:
                         mm.instance = 1
 
-            titles = ["עמודה מהלקוח", "שדה Salesforce", "מקור", "סטטוס",
+            titles = ["עמודה מהלקוח", "אובייקט", "שדה Salesforce", "מקור", "סטטוס",
                       "דוגמה → אחרי", "מפה"] + (["מופע"] if multi else [])
-            hdr = st.columns([3, 4, 1.2, 1.6, 3, 1] + ([1] if multi else []))
+            hdr = st.columns([2.3, 1.6, 3.2, 1.0, 1.5, 2.6, 1] + ([1] if multi else []))
             for hcol, title in zip(hdr, titles):
                 hcol.markdown(f"**{title}**")
             for c in obj_cols:
                 m = schema.mappings.get(c.index)
                 if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
                     continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
-                _mapping_row(c, m, fields, datatypes, input_rows, multi)
+                _mapping_row(c, m, fields, datatypes, input_rows, multi, obj_options)
 
             od = next((o for o in schema.objects if o.api_name == obj), None)
             if od is not None:
