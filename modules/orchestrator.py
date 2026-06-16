@@ -173,6 +173,23 @@ BuildOutput = namedtuple(
 )
 
 
+def junction_field_mappings(schema, junction_object: str) -> list:
+    """
+    שדות-ה-junction כ-(field_api, col_index), נגזרים מהמיפוי — עמודות-הקלט שמופו
+    לאובייקט-ה-junction עצמו (למשל עמודת "סטטוס" → `CampaignMember.Status`).
+
+    זה מימוש הספּק "שדות-junction מוגדרים במסך-המיפוי, לא בטופס-הקשר": טופס-ה-junction
+    קובע רק טופולוגיה (הורים + שדות-Id + בקרה), והשדות-הנוספים מגיעים מהקצאת-העמודה
+    לאובייקט-ה-junction במסך-המיפוי. נצרך ע"י junction_builder דרך `config.field_mappings`.
+    """
+    from config.runtime_schema import ROLE_FIELD
+    return [
+        (m.field_api, idx)
+        for idx, m in sorted(schema.mappings.items())
+        if m.object_api == junction_object and m.role == ROLE_FIELD and m.field_api
+    ]
+
+
 def _derived_columns(schema, object_api: str, base_columns: list) -> list:
     """
     עמודות-פלט נגזרות שאינן ממופות מהקלט: ערכי-ExtraField (קבועים) ושדות-יעד של Lookups.

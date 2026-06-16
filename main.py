@@ -17,7 +17,7 @@ from modules import (  # noqa: F401 — validator/notes_store used in later slic
 from modules.db_freshness import days_since_modified as _db_days, freshness_label as _db_label
 from modules.orchestrator import (
     adapt_columns, apply_value_maps, apply_extra_fields,
-    convert_id_15_to_18, read_ids_from_output_tab,
+    convert_id_15_to_18, read_ids_from_output_tab, junction_field_mappings,
     OUTPUT_TAB, OUTPUT_TAB_MANUAL,
 )
 
@@ -1396,6 +1396,8 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
 
         if st.button("בנה Junction", key=f"build_junction_btn_{jc.junction_object}"):
             with st.spinner(f"בונה {jc.junction_object}…"):
+                # שדות-ה-junction (למשל Status) נגזרים ממה שמופה לאובייקט-ה-junction במיפוי
+                jc.field_mappings = junction_field_mappings(schema, jc.junction_object)
                 rows = _cached_read(schema.input_sheet_id, schema.input_tab)
                 columns_a = adapt_columns(schema, jc.object_a, rows)
                 records_a = split_object(jc.object_a, rows, columns_a, data_start_row=schema.data_start_row)

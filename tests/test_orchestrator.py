@@ -201,3 +201,34 @@ def test_read_ids_missing_column_returns_empty():
     rows = [["שם"], ["FirstName"], ["Alice"]]
     result = read_ids_from_output_tab(rows)
     assert result == {}
+
+
+# ── junction_field_mappings — שדות-junction נגזרים מהמיפוי (shakedown fix) ────
+
+def test_junction_field_mappings_derives_from_mapping():
+    """עמודה שמופתה לאובייקט-ה-junction (CampaignMember.Status) → (field_api, col_idx)."""
+    from modules.orchestrator import junction_field_mappings
+    s = RuntimeSchema()
+    s.mappings = {
+        2: ColumnMapping(col_index=2, object_api="Contact", field_api="FirstName",
+                         role=ROLE_FIELD, status=ST_OK),
+        5: ColumnMapping(col_index=5, object_api="CampaignMember", field_api="Status",
+                         role=ROLE_FIELD, status=ST_OK),
+    }
+    assert junction_field_mappings(s, "CampaignMember") == [("Status", 5)]
+    # אובייקט אחר → לא נכלל
+    assert junction_field_mappings(s, "Contact") == [("FirstName", 2)]
+
+
+def test_junction_field_mappings_skips_control_and_unmapped():
+    """עמודות-בקרה / לא-ממופות אינן נכנסות לשדות-ה-junction."""
+    from modules.orchestrator import junction_field_mappings
+    from config.runtime_schema import ROLE_CONTROL
+    s = RuntimeSchema()
+    s.mappings = {
+        5: ColumnMapping(col_index=5, object_api="CampaignMember", field_api="Status",
+                         role=ROLE_FIELD, status=ST_OK),
+        6: ColumnMapping(col_index=6, object_api="CampaignMember", field_api="",
+                         role=ROLE_CONTROL, status=ST_OK),
+    }
+    assert junction_field_mappings(s, "CampaignMember") == [("Status", 5)]
