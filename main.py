@@ -1023,6 +1023,10 @@ def screen_identity() -> None:
     if not loaded and not schema.extra_objects:
         st.warning("חבר גיליון-קלט בשלב 1 ומפה שדות בשלב 2 תחילה.")
         return
+    # יישור אות קנונית (כמו ב-screen_mapping): "contact"→"Contact" לפי מילון-השדות,
+    # כדי שההשוואה מול schema.mappings (שכבר קנונית) תצליח.
+    _canon_id = {k.casefold(): k for k in dictionary}
+    loaded = [_canon_id.get(o.casefold(), o) for o in loaded]
 
     # מאגר-שדות פר-אובייקט: נטען — שדות ממופים משלב 2; זיהוי-בלבד — כל שדות-המילון
     pools: dict[str, list[str]] = {}
