@@ -58,7 +58,10 @@ class ColumnMapping:
 class IdentityConfig:
     """מנגנוני-זיהוי לאובייקט אחד (שלב 3): מדורגים לפי עדיפות, כל מנגנון = צירוף AND."""
     mechanisms: list[list[str]] = field(default_factory=list)
-    dedup_internal: bool = False   # זיהוי כפילויות פנימיות — כבוי כברירת-מחדל
+    dedup_internal: bool = False   # legacy — טוגל-אובייקט; נשמר לתאימות-פרופיל
+    # זיהוי-כפילויות **פר-מנגנון** (מקביל ל-mechanisms): אילו מנגנונים מאחדים שורות-קלט.
+    # ריק → נופל ל-dedup_internal. ההצלבה מול ה-DB משתמשת בכל המנגנונים בכל מקרה.
+    dedup_mechanisms: list[bool] = field(default_factory=list)
 
 
 @dataclass

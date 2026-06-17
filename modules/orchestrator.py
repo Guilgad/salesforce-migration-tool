@@ -286,6 +286,7 @@ def build_object_core(
         digits_only_fields=schema.digits_only_fields,
         local_key_prefix=object_api[:1].upper(),
         dedup_internal=id_cfg.dedup_internal,
+        dedup_mechanisms=(id_cfg.dedup_mechanisms or None),
     )
 
     grid, cell_colors = build_contacts_grid(

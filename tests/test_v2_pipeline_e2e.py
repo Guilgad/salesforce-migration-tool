@@ -207,3 +207,39 @@ def test_extra_field_appears_in_grid():
     assert "LeadSource" in out.grid[1]
     ls_col = out.grid[1].index("LeadSource")
     assert out.grid[2][ls_col] == "Web"
+
+
+def test_per_mechanism_dedup_flows_through_build_core():
+    """
+    חוזה-בדיקות: dedup פר-מנגנון מחווט מ-`schema.identity` דרך build_object_core.
+    מנגנון 1 (ת״ז) מאחד; מנגנון 2 (שם-משפחה) לא. שתי שורות עם אותה ת״ז מתאחדות לשורת-פלט
+    אחת, אבל שורה שלישית שרק חולקת שם-משפחה (ת״ז שונה) נשארת נפרדת.
+    """
+    from config.runtime_schema import ColumnMapping, ROLE_FIELD, ST_OK
+    s = RuntimeSchema()
+    s.mappings = {
+        0: ColumnMapping(col_index=0, object_api="Contact", field_api="LastName",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+        1: ColumnMapping(col_index=1, object_api="Contact", field_api="ID_Number__c",
+                         role=ROLE_FIELD, status=ST_OK, instance=1),
+    }
+    s.identity = {"Contact": IdentityConfig(
+        mechanisms=[["ID_Number__c"], ["LastName"]],
+        dedup_mechanisms=[True, False],   # מאחד לפי ת״ז בלבד
+    )}
+    rows = [
+        ["Contact", "Contact"],
+        ["שם משפחה", "ת״ז"],
+        ["LastName", "ID_Number__c"],
+        ["כהן", "111"],   # מתאחד עם הבא (אותה ת״ז)
+        ["לוי", "111"],   # אותה ת״ז → מאוחד
+        ["כהן", "222"],   # אותו שם-משפחה כמו שורה 1, ת״ז שונה → נשאר נפרד
+    ]
+    out = build_object_core(s, "Contact", rows, [])
+    data_rows = out.grid[2:]
+    assert len(data_rows) == 2   # {111 מאוחד} + {222 נפרד}
+
+    # אם dedup פר-מנגנון לא היה מחווט (היה מאחד גם לפי שם) → היו פחות/יותר שורות
+    s.identity["Contact"].dedup_mechanisms = [False, False]
+    out2 = build_object_core(s, "Contact", rows, [])
+    assert len(out2.grid[2:]) == 3   # ללא איחוד כלל → 3 שורות

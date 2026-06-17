@@ -80,7 +80,8 @@ def schema_to_dict(schema: RuntimeSchema) -> dict:
         ],
         "multi_instance": schema.multi_instance,
         "identity": {
-            k: {"mechanisms": v.mechanisms, "dedup_internal": v.dedup_internal}
+            k: {"mechanisms": v.mechanisms, "dedup_internal": v.dedup_internal,
+                "dedup_mechanisms": v.dedup_mechanisms}
             for k, v in schema.identity.items()
         },
         "extra_objects": schema.extra_objects,
@@ -175,6 +176,7 @@ def schema_from_dict(d: dict) -> RuntimeSchema:
         k: IdentityConfig(
             mechanisms=list(v.get("mechanisms", [])),
             dedup_internal=bool(v.get("dedup_internal", False)),
+            dedup_mechanisms=[bool(x) for x in v.get("dedup_mechanisms", [])],
         )
         for k, v in d.get("identity", {}).items()
     }

@@ -81,11 +81,17 @@ class _UnionFind:
 
 
 def _group_internal(
-    prepped: list[dict], mechanisms: list[list[str]]
+    prepped: list[dict], mechanisms: list[list[str]], flags: list[bool]
 ) -> list[list[int]]:
-    """קיבוץ פנימי בשרשור. מחזיר קבוצות אינדקסים, ממוינות לפי הופעה ראשונה."""
+    """
+    קיבוץ פנימי בשרשור — **רק על מנגנונים שדגלם True** (dedup פר-מנגנון).
+    כך אפשר "לאחד שורות שחולקות ת״ז" אך "לא לאחד שורות שרק חולקות שם+טלפון".
+    מחזיר קבוצות אינדקסים, ממוינות לפי הופעה ראשונה.
+    """
     uf = _UnionFind(len(prepped))
-    for mech in mechanisms:
+    for mi, mech in enumerate(mechanisms):
+        if not (mi < len(flags) and flags[mi]):
+            continue  # מנגנון התאמה-בלבד — לא מאחד שורות-קלט
         seen: dict[str, int] = {}  # key → אינדקס הרשומה הראשונה עם המפתח הזה
         for idx, rec in enumerate(prepped):
             key = _mechanism_key(rec, mech)  # מנגנון-בכל-פעם
@@ -181,6 +187,7 @@ def deduplicate(
     digits_only_fields: set[str] | None = None,
     local_key_prefix: str = "C",
     dedup_internal: bool = True,
+    dedup_mechanisms: list[bool] | None = None,
 ) -> DedupResult:
     """
     מקבץ רשומות לאנשים ומכריע Insert/Upsert מול ה-DB.
@@ -190,13 +197,20 @@ def deduplicate(
     db_records: ייצוא ה-DB כ-{api: value}, כולל "Id".
     digits_only_fields: שדות לנירמול ספרות-בלבד (פנימי; לא נוגע בדאטה הנטענת).
     local_key_prefix: קידומת ה-local_key ("C" לאנשי-קשר, "K" לקמפיינים).
+    dedup_mechanisms: דגל **פר-מנגנון** (מקביל ל-mechanisms) — אילו מנגנונים מאחדים שורות-קלט.
+                      גובר על dedup_internal. None → נגזר מ-dedup_internal (הכל/כלום).
+                      הצלבת-ה-DB משתמשת בכל המנגנונים בכל מקרה (מנגנון יכול להיות "התאמה בלבד").
     """
     digit_fields = digits_only_fields or set()
     prepped = [_prep(r, digit_fields) for r in records]
     db_prepped = [_prep(r, digit_fields) for r in db_records]
 
-    if dedup_internal:
-        groups = _group_internal(prepped, mechanisms)
+    if dedup_mechanisms is not None:
+        flags = list(dedup_mechanisms)
+    else:
+        flags = [dedup_internal] * len(mechanisms)
+    if any(flags):
+        groups = _group_internal(prepped, mechanisms, flags)
     else:
         groups = [[i] for i in range(len(prepped))]
     db_indices = _build_db_indices(db_prepped, mechanisms)

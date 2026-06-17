@@ -160,3 +160,42 @@ def test_dedup_internal_default_true_still_merges():
     mechanisms = [["Email__c"]]
     result = dedup_engine.deduplicate(records, mechanisms, db_records=[], digits_only_fields=set())
     assert result.counts["inserts"] == 1
+
+
+# ===== dedup פר-מנגנון =====
+
+def test_per_mechanism_dedup_merges_only_flagged_mechanism():
+    """
+    מנגנון 1 (ת״ז) מסומן 'מאחד'; מנגנון 2 (שם משפחה) לא. שתי שורות עם אותה ת״ז מתאחדות,
+    אבל שתי שורות שרק חולקות שם-משפחה (ת״ז שונה) **נשארות נפרדות** — שליטה פר-מנגנון.
+    """
+    records = [
+        {"ID_Number__c": "1", "LastName": "כהן"},   # 0
+        {"ID_Number__c": "1", "LastName": "לוי"},   # 1 — אותה ת״ז כמו 0 → מאוחד
+        {"ID_Number__c": "2", "LastName": "כהן"},   # 2 — אותו שם כמו 0, ת״ז שונה → נפרד
+    ]
+    mechs = [["ID_Number__c"], ["LastName"]]
+    res = dedup_engine.deduplicate(records, mechs, [], dedup_mechanisms=[True, False])
+    assert len(res.persons) == 2
+    assert sorted(len(p.record_indices) for p in res.persons) == [1, 2]
+
+
+def test_per_mechanism_dedup_all_off_keeps_all_separate():
+    """כל הדגלים כבויים → אף שורה לא מתאחדת (גם אם חולקות מפתח)."""
+    records = [
+        {"ID_Number__c": "1"},
+        {"ID_Number__c": "1"},
+    ]
+    mechs = [["ID_Number__c"]]
+    res = dedup_engine.deduplicate(records, mechs, [], dedup_mechanisms=[False])
+    assert len(res.persons) == 2
+
+
+def test_per_mechanism_dedup_overrides_dedup_internal():
+    """כשמסופק dedup_mechanisms — הוא גובר על dedup_internal."""
+    records = [{"Email__c": "a@b.com"}, {"Email__c": "a@b.com"}]
+    mechs = [["Email__c"]]
+    # dedup_internal=True היה מאחד; אך dedup_mechanisms=[False] גובר → לא מאחד
+    res = dedup_engine.deduplicate(records, mechs, [], dedup_internal=True,
+                                   dedup_mechanisms=[False])
+    assert len(res.persons) == 2

@@ -82,11 +82,26 @@ def _get_status(step: int) -> str:
 
 
 def _step_badge(num: int) -> str:
-    """Live sub-label for a nav card (mockup: '3/3 מחוברים' …)."""
+    """תמונת-מצב חיה לכל כרטיס-ניווט (עתיר-מידע — מכל מסך רואים את המצב)."""
     if num == 1:
         connected = sum(bool(x) for x in (
             schema.input_sheet_id, schema.fielddict_sheet_id, schema.db_sheet_id))
         return f"{connected}/3 מחוברים"
+    if num == 2:
+        ok = chk = ctrl = 0
+        for m in schema.mappings.values():
+            if m.role == ROLE_CONTROL:
+                ctrl += 1
+            elif m.role == ROLE_FIELD and m.field_api:
+                ok += 1 if m.status == ST_OK else 0
+                chk += 0 if m.status == ST_OK else 1
+        return f"✅ {ok} · 🟡 {chk} · 🏳️ {ctrl}" if (ok or chk or ctrl) else "—"
+    if num == 3:
+        idd = [o for o, c in schema.identity.items() if any(c.mechanisms)]
+        return f"{len(idd)} אובייקטים מזוהים" if idd else "—"
+    if num == 4:
+        n_l, n_j = len(schema.lookups), len(schema.junctions)
+        return f"🔗 {n_l} · 🔀 {n_j}" if (n_l or n_j) else "—"
     return st.session_state.get("step_badge", {}).get(num, "—")
 
 
@@ -118,16 +133,19 @@ def _topbar() -> None:
         "position:sticky;top:0;z-index:999;background:var(--background-color);}"
         ".st-key-v2_topbar{background:var(--background-color);"
         "padding:0.5rem 0 0.4rem;box-shadow:0 2px 6px rgba(0,0,0,.06);}"
+        # רווח-0 בין הכפתורים — בגלילה כלום לא 'מציץ' בין הכרטיסים (באג שדווח)
+        '.st-key-v2_topbar [data-testid="stHorizontalBlock"]{gap:0!important;}'
     ]
     for num, state in states.items():
         bg, border, fg, shadow = _CARD_STYLE[state]
         css.append(
             f".st-key-nav_{num} button{{"
             f"background:{bg}!important;color:{fg}!important;"
-            f"border:{border}!important;border-radius:8px!important;"
-            f"box-shadow:{shadow}!important;min-height:78px!important;"
-            "line-height:1.3!important;white-space:normal!important;"
-            "padding:8px 10px!important;}"
+            f"border:{border}!important;border-radius:0!important;"
+            f"box-shadow:{shadow}!important;min-height:132px!important;"
+            "line-height:1.35!important;white-space:normal!important;"
+            "align-items:flex-start!important;text-align:start!important;"
+            "padding:11px 12px!important;}"
             f".st-key-nav_{num} button p{{color:{fg}!important;font-size:.84rem!important;}}"
             f".st-key-nav_{num} button:hover{{filter:brightness(.98);}}"
         )
@@ -730,9 +748,9 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
                 entry = next((e for e in vm.entries if e.source == sample), None)
                 if entry and entry.display:
                     shown = f"{after} ({entry.display})"
-            col_prev.caption(f"{sample} → {shown}")
+            col_prev.caption(f"{sample} ← {shown}")
         else:
-            col_prev.caption(f"{sample} → ⚠️ לא זוהה")
+            col_prev.caption(f"{sample} ← ⚠️ לא זוהה")
     elif sample:
         col_prev.caption(sample)
 
@@ -742,7 +760,7 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
     if m.role == ROLE_FIELD and m.field_api and "picklist" in _dt:
         with col_vm.popover("🗺️✓" if vm and vm.entries else "🗺️"):
             st.markdown(f"**מפת-ערכים — {c.label}**")
-            st.caption("ערך-מקור → ערך-יעד (נטען) → שם (תצוגה בלבד). התאמה מדויקת.")
+            st.caption("ערך-מקור ← ערך-יעד (נטען) ← שם (תצוגה בלבד). התאמה מדויקת.")
             seed = (
                 [{"מקור": e.source, "יעד (נטען)": e.target, "שם (תצוגה)": e.display}
                  for e in vm.entries]
@@ -917,7 +935,7 @@ def screen_mapping() -> None:
                         mm.instance = 1
 
             titles = ["עמודה מהלקוח", "אובייקט", "שדה Salesforce", "מקור", "סטטוס",
-                      "דוגמה → אחרי", "מפה"] + (["מופע"] if multi else [])
+                      "דוגמה ← אחרי", "מפה"] + (["מופע"] if multi else [])
             hdr = st.columns([2.3, 1.6, 3.2, 1.0, 1.5, 2.6, 1] + ([1] if multi else []))
             for hcol, title in zip(hdr, titles):
                 hcol.markdown(f"**{title}**")
@@ -981,7 +999,7 @@ def screen_mapping() -> None:
         st.markdown("**מיפויים ידניים שטרם נשמרו לקובץ-המקור:**")
         for idx, api in sorted(pending.items()):
             st.markdown(
-                f"- עמ' {sheets_io.col_letter(idx)} · {by_index[idx].label} → `{api}`"
+                f"- עמ' {sheets_io.col_letter(idx)} · {by_index[idx].label} ← `{api}`"
             )
         if st.button(f"💾 שמור {len(pending)} מיפויים לקובץ-המקור"):
             try:
@@ -1083,35 +1101,46 @@ def screen_identity() -> None:
                     "אין שדות זמינים — מפה שדות לאובייקט זה בשלב 2."
                     if obj in loaded else "האובייקט חסר במילון-השדות (שלב 1)."
                 )
-            cfg.dedup_internal = st.toggle(
-                "זיהוי כפילויות פנימיות (איחוד שורות-קלט שחולקות מנגנון)",
-                value=cfg.dedup_internal,
-                key=f"dedup_{obj}",
-                help="כבוי = כל שורה נטענת בנפרד, שום רשומה לא נעלמת.",
-            )
             if not cfg.mechanisms:
                 cfg.mechanisms.append([])
+            # סנכרון דגלי-dedup פר-מנגנון לאורך רשימת-המנגנונים (ברירת-מחדל כבוי)
+            while len(cfg.dedup_mechanisms) < len(cfg.mechanisms):
+                cfg.dedup_mechanisms.append(False)
+            del cfg.dedup_mechanisms[len(cfg.mechanisms):]
+
+            st.caption("לכל מנגנון: «מאחד כפילויות» = אחד שורות-קלט שחולקות אותו "
+                       "(שונה מהשוואת-DB שרק מחליטה insert/upsert).")
             n = len(cfg.mechanisms)   # חלק מהמפתח — מחיקה/הוספה מזריעות widgets מחדש
             del_idx = None
             for i, mech in enumerate(cfg.mechanisms):
-                c1, c2 = st.columns([8, 1])
+                c1, c2, c3 = st.columns([7, 2, 1])
                 cfg.mechanisms[i] = c1.multiselect(
                     f"מנגנון {i + 1} — צירוף שדות (AND)",
                     options=pool,
                     default=[f for f in mech if f in pool],
                     key=f"mech_{obj}_{n}_{i}",
                 )
-                if n > 1 and c2.button("🗑️", key=f"mech_del_{obj}_{i}"):
+                cfg.dedup_mechanisms[i] = c2.toggle(
+                    "מאחד כפילויות",
+                    value=cfg.dedup_mechanisms[i],
+                    key=f"mdedup_{obj}_{n}_{i}",
+                    help="דלוק = שורות שחולקות מנגנון זה מתאחדות לרשומה אחת. "
+                         "כבוי = התאמה בלבד (משמש להחלטת DB, לא מאחד שורות-קלט).",
+                )
+                if n > 1 and c3.button("🗑️", key=f"mech_del_{obj}_{i}"):
                     del_idx = i
             if del_idx is not None:
                 cfg.mechanisms.pop(del_idx)
+                if del_idx < len(cfg.dedup_mechanisms):
+                    cfg.dedup_mechanisms.pop(del_idx)
                 st.rerun()
             if n < _N_MECHANISMS and st.button("➕ הוסף מנגנון", key=f"mech_add_{obj}"):
                 cfg.mechanisms.append([])
+                cfg.dedup_mechanisms.append(False)
                 st.rerun()
             active = [m for m in cfg.mechanisms if m]
             if active:
-                st.caption("סדר-עדיפות: " + " ← ".join("+".join(m) for m in active))
+                st.caption("סדר-עדיפות: " + " → ".join("+".join(m) for m in active))
             elif obj in loaded:
                 st.caption("ללא מנגנון — כל השורות ייטענו כחדשות (Insert), ללא הצלבה מול ה-DB.")
             if obj in loaded and not active:
@@ -1251,7 +1280,7 @@ def screen_lookups() -> None:
         with st.container(border=True):
             c1, c2 = st.columns([8, 1])
             c1.markdown(
-                f"**{lc.source_object}** · {col_label} → **{lc.target_object}** `{lc.target_field}`  \n"
+                f"**{lc.source_object}** · {col_label} ← **{lc.target_object}** `{lc.target_field}`  \n"
                 f"זוהה לפי: {', '.join(lc.identified_by) or '—'}"
             )
             if c2.button("🗑️", key=f"del_lookup_{i}"):
@@ -1341,7 +1370,7 @@ def screen_lookups() -> None:
             inst_a = f" (מופע {jc.block_a})" if jc.block_a not in ("", "1") else ""
             inst_b = f" (מופע {jc.block_b})" if jc.block_b not in ("", "1") else ""
             c1.markdown(
-                f"**{jc.object_a}**{inst_a} + **{jc.object_b}**{inst_b} → **{jc.junction_object}**  \n"
+                f"**{jc.object_a}**{inst_a} + **{jc.object_b}**{inst_b} ← **{jc.junction_object}**  \n"
                 f"Id A: `{jc.id_field_a}` · Id B: `{jc.id_field_b}`"
                 + (f"  \nבקרה: עמודה {jc.control_col_index}" if jc.control_col_index is not None else "")
                 + ("  \n🔄 סימטרי" if jc.symmetric else "")
@@ -1522,6 +1551,7 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
                     digits_only_fields=schema.digits_only_fields,
                     local_key_prefix=jc.object_a[:1].upper(),
                     dedup_internal=id_cfg_a.dedup_internal,
+                    dedup_mechanisms=(id_cfg_a.dedup_mechanisms or None),
                 )
 
                 columns_b = adapt_columns(schema, jc.object_b, rows)
@@ -1538,6 +1568,7 @@ def _render_junction_card(schema, jc, obj_labels: dict) -> None:
                     digits_only_fields=schema.digits_only_fields,
                     local_key_prefix=jc.object_b[:1].upper(),
                     dedup_internal=id_cfg_b.dedup_internal,
+                    dedup_mechanisms=(id_cfg_b.dedup_mechanisms or None),
                 )
 
                 jnc_tab = _db_tab_for(jc.junction_object)
@@ -1612,6 +1643,7 @@ def _render_manual_panel(schema, obj: str, build_result) -> None:
                 digits_only_fields=schema.digits_only_fields,
                 local_key_prefix=obj[:1].upper(),
                 dedup_internal=id_cfg.dedup_internal,
+                dedup_mechanisms=(id_cfg.dedup_mechanisms or None),
             )
 
             grid, cell_colors = build_contacts_grid(
