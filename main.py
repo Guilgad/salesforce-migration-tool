@@ -666,31 +666,65 @@ def _distinct_values(input_rows: list[list[str]], col_index: int, limit: int = 2
     return out
 
 
+# ── מסך-מיפוי בסגנון מוקאפ #3 ─────────────────────────────────────────────────
+_OBJ_PILL = [("#eef3fb", "#1565c0"), ("#f3eefb", "#7b3fbf"), ("#eafaf1", "#1b8a5a"),
+             ("#fbeeee", "#b3403a"), ("#fff4e5", "#b26a00"), ("#eef7ef", "#2e7d32")]
+
+
+def _obj_pill_html(name: str) -> str:
+    """תג-אובייקט צבעוני (כמו במוקאפ) — צבע יציב לפי שם-האובייקט."""
+    i = sum(ord(ch) for ch in (name or "")) % len(_OBJ_PILL)
+    bg, fg = _OBJ_PILL[i]
+    return (f"<span style='background:{bg};color:{fg};font-size:.72rem;font-weight:600;"
+            f"border-radius:20px;padding:2px 9px;white-space:nowrap;'>{name or '—'}</span>")
+
+
+def _row_status_color(m) -> str:
+    if m.role == ROLE_CONTROL:
+        return "#90a4ae"
+    if m.role == ROLE_SKIP:
+        return "#cfd6e4"
+    if m.field_api and m.status == ST_OK:
+        return "#81c784"
+    return "#ffcc80"
+
+
+def _row_status_text(m) -> str:
+    if m.role == ROLE_CONTROL:
+        return "🏳️ בקרה"
+    if m.role == ROLE_SKIP:
+        return "⚪ לא רלוונטי"
+    if m.field_api and m.status == ST_OK:
+        return "✅ תקין"
+    return "🟡 בדוק התאמה"
+
+
+def _needs_attention(m) -> bool:
+    """שורה שדורשת תשומת-לב (לצוף לראש): שדה ממופה אך עוד לא 'תקין'."""
+    return bool(m) and m.role == ROLE_FIELD and m.status != ST_OK
+
+
 def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
                  obj_options: list[str] | None = None) -> None:
-    """שורת-מיפוי אחת: תווית · אובייקט · בורר-שדה · מקור · סטטוס · דוגמה (· מופע)."""
-    widths = [2.3, 1.6, 3.2, 1.0, 1.5, 2.6, 1] + ([1] if multi else [])
-    cols = st.columns(widths)
-    col_label, col_obj, col_field, col_src, col_status, col_prev, col_vm = cols[:7]
+    """שורת-מיפוי (מוקאפ #3): פס-סטטוס · עמודה+דוגמה · תג-אובייקט · ← · שדה · ⋯ · 🗺️."""
+    cols = st.columns([0.3, 2.7, 1.5, 0.35, 3.1, 0.55, 0.55],
+                      vertical_alignment="center")
+    col_bar, col_col, col_obj, col_arrow, col_field, col_more, col_vm = cols
 
-    col_label.markdown(f"**{c.label or '—'}**")
-    col_label.caption(f"עמ' {sheets_io.col_letter(c.index)}")
+    col_bar.markdown(
+        f"<div style='background:{_row_status_color(m)};width:5px;height:30px;"
+        "border-radius:3px;'></div>", unsafe_allow_html=True)
 
-    # בורר-אובייקט: מאפשר להקצות עמודה לאובייקט שאינו-בלוק (למשל CampaignMember).
-    # נשמר ב-m.object_api (הבנייה קוראת ממנו); שינוי מעביר את השורה לטאב-האובייקט החדש.
-    if obj_options:
-        opts = sorted(set(obj_options) | ({m.object_api} if m.object_api else set()))
-        cur = m.object_api if m.object_api in opts else opts[0]
-        chosen_obj = col_obj.selectbox(
-            "אובייקט", opts, index=opts.index(cur),
-            key=f"mapobj_{c.index}", label_visibility="collapsed",
-        )
-        if chosen_obj != m.object_api:
-            m.object_api = chosen_obj
-            m.field_api, m.role, m.status, m.source = "", ROLE_FIELD, ST_CHECK, "manual"
-            st.rerun()
+    sample = _sample_value(input_rows, c.index)
+    col_col.markdown(f"**{c.label or '—'}**")
+    col_col.caption(f"עמ' {sheets_io.col_letter(c.index)}"
+                    + (f" · {sample}" if sample else ""))
 
-    # אפשרויות: מיוחדות → מועמדים → שאר השדות (Label (api))
+    col_obj.markdown(_obj_pill_html(m.object_api), unsafe_allow_html=True)
+    col_arrow.markdown("<div style='text-align:center;color:#bbb;'>←</div>",
+                       unsafe_allow_html=True)
+
+    # בורר-שדה (אותה לוגיקה): מיוחדות → מועמדים → שאר השדות (Label (api))
     by_api = {f.api: f for f in fields}
     ordered = [api for api in m.candidates if api in by_api]
     ordered += [f.api for f in fields if f.api not in ordered]
@@ -727,35 +761,37 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
             m.status = ST_OK
         st.rerun()
 
-    col_src.caption(_SRC_TAG.get(m.source, "—"))
-
-    if m.role == ROLE_CONTROL:
-        col_status.markdown("🏳️ בקרה")
-    elif m.role == ROLE_SKIP:
-        col_status.markdown("⚪ לא רלוונטי")
-    elif m.status == ST_OK:
-        col_status.markdown("✅ תקין")
-    else:
-        col_status.markdown("🟡 בדוק התאמה")
-
     vm = schema.value_maps.get(c.index)
-    sample = _sample_value(input_rows, c.index)
-    if sample and m.role == ROLE_FIELD and m.field_api:
-        after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), vm)
-        if after:
-            shown = after
-            if vm:
-                entry = next((e for e in vm.entries if e.source == sample), None)
-                if entry and entry.display:
-                    shown = f"{after} ({entry.display})"
-            col_prev.caption(f"{sample} ← {shown}")
-        else:
-            col_prev.caption(f"{sample} ← ⚠️ לא זוהה")
-    elif sample:
-        col_prev.caption(sample)
+    # ⋯ — גילוי-בדרישה: סטטוס · מקור · בורר-אובייקט (הקצאה ידנית) · מופע · תצוגה-מקדימה
+    with col_more.popover("⋯", help="פרטים: סטטוס · מקור · אובייקט · מופע · תצוגה"):
+        st.markdown(f"**{c.label or '—'}** · עמ' {sheets_io.col_letter(c.index)}")
+        st.caption(f"{_row_status_text(m)} · מקור: {_SRC_TAG.get(m.source, '—')}")
+        if obj_options:
+            opts = sorted(set(obj_options) | ({m.object_api} if m.object_api else set()))
+            cur = m.object_api if m.object_api in opts else opts[0]
+            chosen_obj = st.selectbox(
+                "אובייקט", opts, index=opts.index(cur), key=f"mapobj_{c.index}")
+            if chosen_obj != m.object_api:
+                m.object_api = chosen_obj
+                m.field_api, m.role, m.status, m.source = "", ROLE_FIELD, ST_CHECK, "manual"
+                st.rerun()
+        if sample and m.role == ROLE_FIELD and m.field_api:
+            after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), vm)
+            if after:
+                shown = after
+                if vm:
+                    entry = next((e for e in vm.entries if e.source == sample), None)
+                    if entry and entry.display:
+                        shown = f"{after} ({entry.display})"
+                st.caption(f"תצוגה: {sample} ← {shown}")
+            else:
+                st.caption(f"תצוגה: {sample} ← ⚠️ לא זוהה")
+        if multi and m.role == ROLE_FIELD:
+            m.instance = int(st.number_input(
+                "מופע (בעל=1 / אישה=2)", min_value=1, max_value=9,
+                value=m.instance, key=f"inst_{c.index}"))
 
-    # מפת-ערכים — חלונית-צפה במקום. רלוונטית רק לשדה-פיקליסט שנבחר בפועל
-    # (לא לכל ROLE_FIELD — זה ברירת-המחדל גם לעמודה לא-ממופה / Text/Email).
+    # מפת-ערכים — חלונית נפרדת (popover לא ניתן-לקינון), רק לשדה-פיקליסט שנבחר בפועל.
     _dt = datatypes.get(m.field_api, "").casefold()
     if m.role == ROLE_FIELD and m.field_api and "picklist" in _dt:
         with col_vm.popover("🗺️✓" if vm and vm.entries else "🗺️"):
@@ -794,12 +830,6 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
             if vm and vm.entries and b2.button("הסר מפה", key=f"vm_del_{c.index}"):
                 schema.value_maps.pop(c.index, None)
                 st.rerun()
-
-    if multi and m.role == ROLE_FIELD:
-        m.instance = int(cols[7].number_input(
-            "מופע", min_value=1, max_value=9, value=m.instance,
-            key=f"inst_{c.index}", label_visibility="collapsed",
-        ))
 
 
 def _block_occurrences(columns, raw_row0: list) -> dict[int, int]:
@@ -934,12 +964,16 @@ def screen_mapping() -> None:
                     if mm:
                         mm.instance = 1
 
-            titles = ["עמודה מהלקוח", "אובייקט", "שדה Salesforce", "מקור", "סטטוס",
-                      "דוגמה ← אחרי", "מפה"] + (["מופע"] if multi else [])
-            hdr = st.columns([2.3, 1.6, 3.2, 1.0, 1.5, 2.6, 1] + ([1] if multi else []))
+            titles = ["", "עמודה מהלקוח", "אובייקט", "", "שדה Salesforce", "פרטים", "מפה"]
+            hdr = st.columns([0.3, 2.7, 1.5, 0.35, 3.1, 0.55, 0.55],
+                             vertical_alignment="center")
             for hcol, title in zip(hdr, titles):
-                hcol.markdown(f"**{title}**")
-            for c in obj_cols:
+                hcol.markdown(f"**{title}**" if title else " ")
+            # שורות "בדוק התאמה" צפות לראש (מיון יציב — שאר השורות בסדר-העמודה)
+            obj_cols_sorted = sorted(
+                obj_cols,
+                key=lambda col: 0 if _needs_attention(schema.mappings.get(col.index)) else 1)
+            for c in obj_cols_sorted:
                 m = schema.mappings.get(c.index)
                 if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
                     continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
