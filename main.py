@@ -252,14 +252,10 @@ def _screen_queries() -> None:
 
     st.text_area("שאילתה (ניתנת לעריכה)", key="query_editor", height=200)
 
-    if st.button("📋 העתק", key="copy_query"):
-        query_text = st.session_state.get("query_editor", "")
-        escaped = query_text.replace("\\", "\\\\").replace("`", "\\`")
-        st.markdown(
-            f"<script>navigator.clipboard.writeText(`{escaped}`)</script>",
-            unsafe_allow_html=True,
-        )
-        st.success("הועתק ללוח!")
+    # להעתקה אמינה: בלוק-הקוד של Streamlit נושא כפתור-העתקה מובנה שעובד.
+    # (הכפתור הקודם הזריק <script> דרך st.markdown — Streamlit מסנן <script>, אז לא העתיק.)
+    st.caption("להעתקה — לחץ על אייקון-ההעתקה בפינת הבלוק:")
+    st.code(st.session_state.get("query_editor", ""), language="sql")
 
 
 def _parse_sheet_id(raw: str) -> str:
@@ -706,21 +702,41 @@ def _needs_attention(m) -> bool:
 
 def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
                  obj_options: list[str] | None = None) -> None:
-    """שורת-מיפוי (מוקאפ #3): פס-סטטוס · עמודה+דוגמה · תג-אובייקט · ← · שדה · ⋯ · 🗺️."""
-    cols = st.columns([0.3, 2.7, 1.5, 0.35, 3.1, 0.55, 0.55],
-                      vertical_alignment="center")
-    col_bar, col_col, col_obj, col_arrow, col_field, col_more, col_vm = cols
+    """שורת-מיפוי (מוקאפ #3): פס-סטטוס · עמודה+אות · בורר-אובייקט · ← · שדה · [מופע] · ⋯ · 🗺️."""
+    if multi:
+        cols = st.columns([0.22, 2.2, 1.7, 0.3, 2.7, 0.9, 0.5, 0.5],
+                          vertical_alignment="center")
+        col_bar, col_col, col_obj, col_arrow, col_field, col_inst, col_more, col_vm = cols
+    else:
+        cols = st.columns([0.22, 2.2, 1.7, 0.3, 3.0, 0.5, 0.5],
+                          vertical_alignment="center")
+        col_bar, col_col, col_obj, col_arrow, col_field, col_more, col_vm = cols
+        col_inst = None
 
     col_bar.markdown(
         f"<div style='background:{_row_status_color(m)};width:5px;height:30px;"
         "border-radius:3px;'></div>", unsafe_allow_html=True)
 
-    sample = _sample_value(input_rows, c.index)
-    col_col.markdown(f"**{c.label or '—'}**")
-    col_col.caption(f"עמ' {sheets_io.col_letter(c.index)}"
-                    + (f" · {sample}" if sample else ""))
+    # שם-עמודה + אות-עמודה באותה שורה (בלי דוגמה)
+    col_col.markdown(
+        f"**{c.label or '—'}** "
+        f"<span style='color:#999;font-size:.76rem;'>{sheets_io.col_letter(c.index)}</span>",
+        unsafe_allow_html=True)
 
-    col_obj.markdown(_obj_pill_html(m.object_api), unsafe_allow_html=True)
+    # בורר-אובייקט בעמודת-האובייקט (הקצאה ידנית; שינוי מעביר לטאב-האובייקט)
+    if obj_options:
+        opts = sorted(set(obj_options) | ({m.object_api} if m.object_api else set()))
+        cur = m.object_api if m.object_api in opts else opts[0]
+        chosen_obj = col_obj.selectbox(
+            "אובייקט", opts, index=opts.index(cur),
+            key=f"mapobj_{c.index}", label_visibility="collapsed")
+        if chosen_obj != m.object_api:
+            m.object_api = chosen_obj
+            m.field_api, m.role, m.status, m.source = "", ROLE_FIELD, ST_CHECK, "manual"
+            st.rerun()
+    else:
+        col_obj.markdown(_obj_pill_html(m.object_api), unsafe_allow_html=True)
+
     col_arrow.markdown("<div style='text-align:center;color:#bbb;'>←</div>",
                        unsafe_allow_html=True)
 
@@ -761,20 +777,18 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
             m.status = ST_OK
         st.rerun()
 
+    # מופע — עמודה גלויה (כשהאובייקט רב-מופע)
+    if multi and col_inst is not None and m.role == ROLE_FIELD:
+        m.instance = int(col_inst.number_input(
+            "מופע", min_value=1, max_value=9, value=m.instance,
+            key=f"inst_{c.index}", label_visibility="collapsed"))
+
     vm = schema.value_maps.get(c.index)
-    # ⋯ — גילוי-בדרישה: סטטוס · מקור · בורר-אובייקט (הקצאה ידנית) · מופע · תצוגה-מקדימה
-    with col_more.popover("⋯", help="פרטים: סטטוס · מקור · אובייקט · מופע · תצוגה"):
+    # ⋯ — גילוי-בדרישה: סטטוס · מקור · תצוגה-מקדימה
+    with col_more.popover("⋯", help="פרטים: סטטוס · מקור · תצוגה"):
         st.markdown(f"**{c.label or '—'}** · עמ' {sheets_io.col_letter(c.index)}")
         st.caption(f"{_row_status_text(m)} · מקור: {_SRC_TAG.get(m.source, '—')}")
-        if obj_options:
-            opts = sorted(set(obj_options) | ({m.object_api} if m.object_api else set()))
-            cur = m.object_api if m.object_api in opts else opts[0]
-            chosen_obj = st.selectbox(
-                "אובייקט", opts, index=opts.index(cur), key=f"mapobj_{c.index}")
-            if chosen_obj != m.object_api:
-                m.object_api = chosen_obj
-                m.field_api, m.role, m.status, m.source = "", ROLE_FIELD, ST_CHECK, "manual"
-                st.rerun()
+        sample = _sample_value(input_rows, c.index)
         if sample and m.role == ROLE_FIELD and m.field_api:
             after = auto_mapper.preview_value(sample, datatypes.get(m.field_api, ""), vm)
             if after:
@@ -786,10 +800,6 @@ def _mapping_row(c, m, fields, datatypes, input_rows, multi: bool = False,
                 st.caption(f"תצוגה: {sample} ← {shown}")
             else:
                 st.caption(f"תצוגה: {sample} ← ⚠️ לא זוהה")
-        if multi and m.role == ROLE_FIELD:
-            m.instance = int(st.number_input(
-                "מופע (בעל=1 / אישה=2)", min_value=1, max_value=9,
-                value=m.instance, key=f"inst_{c.index}"))
 
     # מפת-ערכים — חלונית נפרדת (popover לא ניתן-לקינון), רק לשדה-פיקליסט שנבחר בפועל.
     _dt = datatypes.get(m.field_api, "").casefold()
@@ -964,20 +974,30 @@ def screen_mapping() -> None:
                     if mm:
                         mm.instance = 1
 
-            titles = ["", "עמודה מהלקוח", "אובייקט", "", "שדה Salesforce", "פרטים", "מפה"]
-            hdr = st.columns([0.3, 2.7, 1.5, 0.35, 3.1, 0.55, 0.55],
-                             vertical_alignment="center")
-            for hcol, title in zip(hdr, titles):
-                hcol.markdown(f"**{title}**" if title else " ")
-            # שורות "בדוק התאמה" צפות לראש (מיון יציב — שאר השורות בסדר-העמודה)
-            obj_cols_sorted = sorted(
-                obj_cols,
-                key=lambda col: 0 if _needs_attention(schema.mappings.get(col.index)) else 1)
-            for c in obj_cols_sorted:
-                m = schema.mappings.get(c.index)
-                if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
-                    continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
-                _mapping_row(c, m, fields, datatypes, input_rows, multi, obj_options)
+            # רווח-עמודות מצומצם כדי שכל העמודות (כולל מופע) ייכנסו — scoped לטבלת-המיפוי
+            st.markdown(
+                "<style>[class*='st-key-map_rows_'] [data-testid='stHorizontalBlock']"
+                "{gap:.4rem!important;}</style>", unsafe_allow_html=True)
+            with st.container(key=f"map_rows_{obj}"):
+                if multi:
+                    titles = ["", "עמודה", "אובייקט", "", "שדה Salesforce", "מופע", "⋯", "מפה"]
+                    hdr = st.columns([0.22, 2.2, 1.7, 0.3, 2.7, 0.9, 0.5, 0.5],
+                                     vertical_alignment="center")
+                else:
+                    titles = ["", "עמודה", "אובייקט", "", "שדה Salesforce", "⋯", "מפה"]
+                    hdr = st.columns([0.22, 2.2, 1.7, 0.3, 3.0, 0.5, 0.5],
+                                     vertical_alignment="center")
+                for hcol, title in zip(hdr, titles):
+                    hcol.markdown(f"**{title}**" if title else " ")
+                # שורות "בדוק התאמה" צפות לראש (מיון יציב — שאר השורות בסדר-העמודה)
+                obj_cols_sorted = sorted(
+                    obj_cols,
+                    key=lambda col: 0 if _needs_attention(schema.mappings.get(col.index)) else 1)
+                for c in obj_cols_sorted:
+                    m = schema.mappings.get(c.index)
+                    if m is None or (m.role == ROLE_SKIP and not c.label and not c.proposed_api):
+                        continue  # עמודת-מפריד — מוצגת ב"עמודות מוסתרות"
+                    _mapping_row(c, m, fields, datatypes, input_rows, multi, obj_options)
 
             od = next((o for o in schema.objects if o.api_name == obj), None)
             if od is not None:
